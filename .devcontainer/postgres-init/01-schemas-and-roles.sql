@@ -47,20 +47,51 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA app, pii
 
 -- ETL reads from app, writes to stg and marts.
 GRANT USAGE ON SCHEMA app TO stele_etl;
+-- ALTER DEFAULT PRIVILEGES is grantor-specific: it only covers tables created by
+-- the role that runs it. app tables are created by whichever role runs the
+-- migrations (stele_api in prod, stele_dev in the dev container, postgres in CI),
+-- NOT by this init script's runner — so the default-privilege rule must be set
+-- FOR each of those creator roles, or stele_etl silently has no SELECT on its
+-- sole ETL source and dbt cannot read it. The unqualified block below covers the
+-- init runner (postgres in CI); the FOR ROLE variants cover the others.
 ALTER DEFAULT PRIVILEGES IN SCHEMA app
     GRANT SELECT ON TABLES TO stele_etl;
+ALTER DEFAULT PRIVILEGES FOR ROLE stele_api IN SCHEMA app
+    GRANT SELECT ON TABLES TO stele_etl;
+-- Catch any app tables that already exist when this (idempotent) script is re-run
+-- after migrations — a no-op on a fresh build where no app tables exist yet.
+GRANT SELECT ON ALL TABLES IN SCHEMA app TO stele_etl;
 GRANT USAGE, CREATE ON SCHEMA stg, marts TO stele_etl;
 ALTER DEFAULT PRIVILEGES IN SCHEMA stg, marts
     GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON TABLES TO stele_etl;
 ALTER DEFAULT PRIVILEGES IN SCHEMA stg, marts
     GRANT USAGE ON SEQUENCES TO stele_etl;
 
--- Analyst reads marts only.
+-- Analyst reads marts only. marts tables are created by stele_etl (dbt), not by
+-- this init runner, so the same FOR ROLE hardening as app→stele_etl applies.
 GRANT USAGE ON SCHEMA marts TO stele_analyst;
 ALTER DEFAULT PRIVILEGES IN SCHEMA marts
     GRANT SELECT ON TABLES TO stele_analyst;
+ALTER DEFAULT PRIVILEGES FOR ROLE stele_etl IN SCHEMA marts
+    GRANT SELECT ON TABLES TO stele_analyst;
+GRANT SELECT ON ALL TABLES IN SCHEMA marts TO stele_analyst;
 
 -- PII reviewer reads pii.
 GRANT USAGE ON SCHEMA pii TO stele_pii_reviewer;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pii
     GRANT SELECT, UPDATE ON TABLES TO stele_pii_reviewer;
+
+-- Dev container only: migrations run as the superuser stele_dev, so app/marts
+-- tables it creates need the same FOR ROLE default-privilege rule. Guarded
+-- because stele_dev does not exist in CI (where postgres runs migrations and the
+-- unqualified blocks above already apply). No-op anywhere stele_dev is absent.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stele_dev') THEN
+        EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE stele_dev IN SCHEMA app '
+            'GRANT SELECT ON TABLES TO stele_etl';
+        EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE stele_dev IN SCHEMA marts '
+            'GRANT SELECT ON TABLES TO stele_analyst';
+    END IF;
+END
+$$;

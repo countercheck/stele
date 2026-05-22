@@ -67,6 +67,34 @@ async def test_submit_persists_raw_and_read_model(
     assert item_count == 1
 
 
+async def test_submit_embeds_definition_snapshot(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The raw row freezes the published definition + hash so dbt can rebuild
+    dimensions from raw_responses alone (invariant 1/4, NFR-1)."""
+    survey_id, definition_hash = await _publish_survey(client)
+
+    await client.post(
+        f"/surveys/{survey_id}/versions/1/responses",
+        json={
+            "definition_hash": definition_hash,
+            "payload": {"q1": "a"},
+            "shown_questions": ["q1"],
+        },
+    )
+
+    snapshot = (
+        await db_session.execute(
+            text("SELECT definition_snapshot FROM app.raw_responses WHERE survey_id = :sid"),
+            {"sid": survey_id},
+        )
+    ).scalar_one()
+    assert snapshot is not None
+    assert snapshot["definition_hash"] == definition_hash
+    assert snapshot["definition"] == VALID_DEFINITION
+    assert snapshot["published_at"] is not None
+
+
 async def test_submit_rejects_hash_drift(client: AsyncClient) -> None:
     survey_id, _ = await _publish_survey(client)
     response = await client.post(

@@ -1,0 +1,93 @@
+version: 2
+
+# Surrogate keys are deterministic md5 hashes of natural keys (see
+# macros/surrogate_key.sql), not the bigint sequences nominally shown in
+# design-doc §3.5. Rationale: stable across full-refresh rebuilds, computable
+# per-model without a shared sequence, portable to DuckDB, dependency-free.
+
+models:
+  - name: dim_respondent
+    columns:
+      - name: respondent_id
+        data_tests: [unique, not_null]
+
+  - name: dim_survey_version
+    columns:
+      - name: survey_version_id
+        data_tests: [unique, not_null]
+
+  - name: dim_question
+    columns:
+      - name: question_id
+        data_tests: [unique, not_null]
+
+  - name: dim_question_version
+    columns:
+      - name: question_version_id
+        data_tests: [unique, not_null]
+      - name: question_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_question')
+                field: question_id
+
+  - name: dim_option
+    columns:
+      - name: option_key
+        data_tests: [unique, not_null]
+      - name: question_version_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_question_version')
+                field: question_version_id
+
+  - name: fact_response_item
+    columns:
+      - name: fact_id
+        data_tests: [unique, not_null]
+      - name: respondent_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_respondent')
+                field: respondent_id
+      - name: survey_version_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_survey_version')
+                field: survey_version_id
+      - name: question_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_question')
+                field: question_id
+      - name: question_version_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_question_version')
+                field: question_version_id
+      - name: option_key
+        # nullable for shown-skipped / routed-past rows; when set it must resolve.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_option')
+                field: option_key
+
+  - name: fact_response
+    columns:
+      - name: response_fact_id
+        data_tests: [unique, not_null]
+      - name: question_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_question')
+                field: question_id

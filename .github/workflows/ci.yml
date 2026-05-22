@@ -180,8 +180,20 @@ jobs:
         run: |
           psql -c "CREATE DATABASE stele;"
           psql -v ON_ERROR_STOP=1 -d postgres -f .devcontainer/postgres-init/01-schemas-and-roles.sql
+      - name: Migrate + seed (as superuser, so init default privileges apply)
+        # Tables created by postgres → the init SQL's default-privilege grants
+        # give stele_etl SELECT on app. The seed exercises the real write path so
+        # the build below has data across all three routing states.
+        env:
+          STELE_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/stele
+        run: |
+          (cd api && uv run alembic upgrade head)
+          uv run python scripts/seed_example_survey.py
       - name: dbt parse & compile
         working-directory: dbt
         run: |
           uv run dbt parse --profiles-dir .
           uv run dbt compile --profiles-dir .
+      - name: dbt build (as stele_etl — runs models + custom invariant tests)
+        working-directory: dbt
+        run: uv run dbt build --profiles-dir .

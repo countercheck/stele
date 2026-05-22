@@ -174,6 +174,14 @@ async def submit_response(
         payload=submission.payload,
         shown_questions=submission.shown_questions,
         client_metadata=submission.client_metadata,
+        # Freeze the definition this response was answered against, so the
+        # warehouse can rebuild dimensions from raw_responses alone. The
+        # published row is immutable, so this snapshot can never drift.
+        definition_snapshot={
+            "definition": survey.definition_json,
+            "definition_hash": survey.definition_hash,
+            "published_at": survey.published_at.isoformat() if survey.published_at else None,
+        },
     )
     session.add(raw)
     await session.flush()

@@ -50,6 +50,12 @@ class RawResponse(Base):
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
     shown_questions: Mapped[list[Any] | None] = mapped_column(JSONB, default=None)
     client_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    # Frozen copy of the published definition (+ its hash and published_at) the
+    # response was answered against. Lets dbt build dimensions from raw_responses
+    # alone — keeping it the sole, reproducible ETL source (invariant 1/4, NFR-1)
+    # — without reading app.survey_definitions. Nullable like the other content
+    # columns so the M2 tombstone workflow can null it on withdrawal.
+    definition_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
 
 
 class Response(Base):

@@ -1,0 +1,11 @@
+version: 2
+
+# The warehouse reads app.raw_responses and nothing else — it is the sole ETL
+# source (invariant 1/4) and marts must be reproducible from it alone (NFR-1).
+# Declaring any other app table here is a guardrail violation; check_invariants.py
+# rejects anything but raw_responses under the app schema.
+sources:
+  - name: app
+    schema: app
+    tables:
+      - name: raw_responses
