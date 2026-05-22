@@ -23,6 +23,8 @@ export default [
       ...react.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
       'react/react-in-jsx-scope': 'off',
+      'react/prop-types': 'off', // TypeScript types cover prop validation
+      'no-undef': 'off', // TypeScript checks identifiers; it also knows DOM type-only names
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
     settings: { react: { version: 'detect' } },
