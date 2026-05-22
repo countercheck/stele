@@ -23,10 +23,12 @@ pages as (
         survey_version,
         definition_hash,
         published_at,
-        coalesce(
-            definition -> 'pages',
-            jsonb_build_array(jsonb_build_object('elements', definition -> 'elements'))
-        ) as pages
+        case
+            when jsonb_typeof(definition -> 'pages') = 'array' then definition -> 'pages'
+            when jsonb_typeof(definition -> 'elements') = 'array'
+                then jsonb_build_array(jsonb_build_object('elements', definition -> 'elements'))
+            else '[]'::jsonb
+        end as pages
     from definitions
 )
 
@@ -40,6 +42,11 @@ select
     elem.ordinality::int as display_order
 from pages as p,
     lateral jsonb_array_elements(p.pages) as page(value),
-    lateral jsonb_array_elements(page.value -> 'elements')
+    lateral jsonb_array_elements(
+        case
+            when jsonb_typeof(page.value -> 'elements') = 'array' then page.value -> 'elements'
+            else '[]'::jsonb
+        end
+    )
         with ordinality as elem(value, ordinality)
 where elem.value ->> 'name' is not null
