@@ -25,16 +25,34 @@ with selections as (
         on fri.question_id = dq.question_id
     left join {{ ref('dim_option') }} as opt
         on fri.option_key = opt.option_key
+),
+option_counts as (
+    select
+        question,
+        option_label,
+        count(*) filter (where option_key is not null) as selections,
+        count(distinct respondent_id) filter (where option_key is not null) as respondents
+    from selections
+    where option_value is not null
+    group by question, option_label
+),
+routing_counts as (
+    select
+        question,
+        count(*) filter (where was_shown and option_key is null) as shown_but_skipped,
+        count(*) filter (where not was_shown) as routed_past
+    from selections
+    group by question
 )
 
 select
-    question,
-    option_label,
-    count(*) filter (where option_key is not null) as selections,
-    count(distinct respondent_id) filter (where option_key is not null) as respondents,
-    count(*) filter (where was_shown and option_key is null) as shown_but_skipped,
-    count(*) filter (where not was_shown) as routed_past
-from selections
-where option_value is not null
-group by question, option_label
-order by question, option_label
+    oc.question,
+    oc.option_label,
+    oc.selections,
+    oc.respondents,
+    rc.shown_but_skipped,
+    rc.routed_past
+from option_counts as oc
+inner join routing_counts as rc
+    on oc.question = rc.question
+order by oc.question, oc.option_label

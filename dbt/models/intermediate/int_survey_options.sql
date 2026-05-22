@@ -9,9 +9,13 @@ with options as (
         e.stable_name,
         choice.value as choice,
         choice.ordinality::int as display_order
-    from {{ ref('int_survey_elements') }} as e,
-        lateral jsonb_array_elements(e.element -> 'choices')
-            with ordinality as choice(value, ordinality)
+    from {{ ref('int_survey_elements') }} as e
+    left join lateral jsonb_array_elements(
+        case
+            when jsonb_typeof(e.element -> 'choices') = 'array' then e.element -> 'choices'
+            else '[]'::jsonb
+        end
+    ) with ordinality as choice(value, ordinality) on true
 )
 
 select

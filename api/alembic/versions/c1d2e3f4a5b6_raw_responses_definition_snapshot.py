@@ -16,8 +16,8 @@ Published definitions are immutable, so the snapshot can never drift from the
 version that was answered. Nullable, consistent with payload/shown_questions/
 client_metadata, so the M2 tombstone workflow can null it on withdrawal.
 
-NOTE: this extends design-doc §3.4's raw_responses column list; the doc edit is
-proposed separately (CLAUDE.md: do not modify survey-engine-*.md without asking).
+NOTE: this extends design-doc §3.4's raw_responses column list; the
+corresponding survey-engine-design-doc.md update is included in this PR.
 """
 
 from collections.abc import Sequence
