@@ -72,6 +72,15 @@ Order matters: lint/format first so tests run against the code that'll be commit
 - dbt: built-in `tests:` blocks on models for relationships/uniqueness; `dbt/tests/singular/` for the custom invariants (row-count parity, polymorphic value, shown-set integrity, etc.).
 - Frontend: colocated `*.test.ts` next to the module under test.
 
+## Git workflow
+
+Work on branches; never commit directly to `main`. One branch per story/unit of work, branched off `main`:
+
+- Branch name: `m<milestone>.<story>-<slug>` for plan stories (e.g. `m1.4-frontend-render-submit`); `chore/<slug>` or `fix/<slug>` otherwise.
+- Push the branch and open a PR into `main`. CI (`.github/workflows/ci.yml`) must pass; the human reviewer merges.
+- Keep `main` green and releasable at all times.
+- Don't force-push `main` or amend published commits; create new commits instead.
+
 ## Don't add silent defaults for methodological judgments
 
 Three judgments stay explicit, always. Examples of what going-wrong-silently looks like:
