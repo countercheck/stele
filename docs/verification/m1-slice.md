@@ -28,10 +28,12 @@ including `raw_responses.definition_snapshot`.
 uv run python scripts/seed_example_survey.py
 ```
 
-Publishes a 2-question single-select survey and submits 4 responses spanning all
-three routing states (answered / shown-skipped / routed-past) via the actual
-`api.survey_engine.service`, so each `raw_responses` row carries its
-`definition_snapshot`.
+Publishes the example survey (two single-select questions plus two free-text
+questions — see `scripts/seed_example_survey.py`) and submits 4 responses
+spanning all three routing states (answered / shown-skipped / routed-past) via
+the actual `api.survey_engine.service`, so each `raw_responses` row carries its
+`definition_snapshot`. The single-select slice is verified below; the free-text
+PII routing is verified in `m2-pii-slice.md`.
 
 ## 3. Build the warehouse (as the real ETL role)
 
@@ -41,10 +43,11 @@ DBT_HOST=localhost DBT_USER=stele_etl DBT_PASSWORD=dev DBT_DBNAME=stele \
   uv run dbt build --profiles-dir .
 ```
 
-Expect `PASS=40 ... ERROR=0`. The custom invariant tests
+Expect `PASS=42 ... ERROR=0`. The custom invariant tests
 (`option_fact_row_count_parity`, `polymorphic_value_invariant`,
-`shown_set_integrity`, `version_coverage`) must be green. Running as `stele_etl`
-(not the dev superuser) is deliberate — it exercises the real grants.
+`shown_set_integrity`, `version_coverage`, `free_text_redaction_parity`) must be
+green. Running as `stele_etl` (not the dev superuser) is deliberate — it
+exercises the real grants.
 
 ## 4. Analyst query (as the analyst role)
 

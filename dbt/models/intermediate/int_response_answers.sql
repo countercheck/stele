@@ -21,7 +21,7 @@ with responses as (
 ),
 
 questions as (
-    select survey_id, survey_version, stable_name
+    select survey_id, survey_version, stable_name, question_type, pii_risk
     from {{ ref('int_survey_questions') }}
 )
 
@@ -32,6 +32,10 @@ select
     r.survey_version,
     r.submitted_at,
     q.stable_name,
+    -- question_type and pii_risk ride along so fact_response_item can gate
+    -- value_text on them (free-text + pii_risk='low') without re-parsing.
+    q.question_type,
+    q.pii_risk,
     coalesce(jsonb_exists(r.shown_questions, q.stable_name), false) as was_shown,
     coalesce(jsonb_exists(r.payload, q.stable_name), false) as answered,
     r.payload ->> q.stable_name as answer_value

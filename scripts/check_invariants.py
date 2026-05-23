@@ -371,10 +371,15 @@ class Invariant5_ParentQuestionPaired(Check):
 class Invariant6_ValueTextGuard(Check):
     """marts.fact_response_item.value_text writes require a pii_risk='low' guard.
 
-    Static check: find statements that write `value_text` into the fact table
-    and verify a `pii_risk` filter is present. This is a coarse net (the guard
-    may be expressed many ways), but it catches the obvious omissions and
-    forces the question to be visible in code review.
+    Static check: find writes of `value_text` into the fact table and verify a
+    `pii_risk` filter sits with them. A write shows up either as a dbt projection
+    `<expr> as value_text` (models don't terminate statements with ';') or as a
+    ';'-terminated INSERT/UPDATE in raw SQL. For the projection form the guard
+    must appear in the expression immediately preceding the alias; GUARD_WINDOW
+    bounds that lookback so an unrelated pii_risk elsewhere in the model can't
+    mask an ungated write. This is a coarse net (the guard may be expressed many
+    ways), but it catches the obvious omissions and forces the question to be
+    visible in code review.
     """
 
     invariant = 6
@@ -384,8 +389,10 @@ class Invariant6_ValueTextGuard(Check):
         "Default is 'high'; downgrades are deliberate. See CLAUDE.md § Invariants."
     )
 
+    ALIAS_RE = re.compile(r"\bas\s+value_text\b", re.IGNORECASE)
+    GUARD_WINDOW = 300
     STMT_RE = re.compile(
-        r"(INSERT\s+INTO|UPDATE|SELECT)\b[^;]*?\bvalue_text\b[^;]*?;",
+        r"(INSERT\s+INTO|UPDATE)\b[^;]*?\bvalue_text\b[^;]*?;",
         re.IGNORECASE | re.DOTALL,
     )
 
@@ -413,6 +420,26 @@ class Invariant6_ValueTextGuard(Check):
         for path in sql_files:
             text = path.read_text(encoding="utf-8")
             stripped = _strip_sql_comments_preserving_lines(text)
+
+            # dbt projection form: `<expr> as value_text`. The guard must sit in
+            # the expression just before the alias (bounded by GUARD_WINDOW).
+            for match in self.ALIAS_RE.finditer(stripped):
+                window = stripped[max(0, match.start() - self.GUARD_WINDOW) : match.start()]
+                if "pii_risk" not in window.lower():
+                    line_no = stripped.count("\n", 0, match.start()) + 1
+                    violations.append(
+                        Violation(
+                            invariant=self.invariant,
+                            path=_rel(path),
+                            line=line_no,
+                            snippet=stripped[max(0, match.start() - 60) : match.end()].strip()[
+                                :200
+                            ],
+                            detail="value_text projection not gated by a pii_risk condition",
+                        )
+                    )
+
+            # Raw SQL form: a ';'-terminated INSERT/UPDATE writing value_text.
             for match in self.STMT_RE.finditer(stripped):
                 stmt = match.group(0).lower()
                 # Only flag statements that actually write value_text (i.e.

@@ -106,3 +106,32 @@ async def test_new_draft_version_after_publish(client: AsyncClient) -> None:
 async def test_get_unknown_survey_404(client: AsyncClient) -> None:
     response = await client.get("/surveys/00000000-0000-0000-0000-000000000000/versions/1")
     assert response.status_code == 404
+
+
+def _free_text_definition(element_extra: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "pages": [{"name": "p1", "elements": [{"type": "comment", "name": "ft1", **element_extra}]}]
+    }
+
+
+async def test_publish_rejects_low_risk_without_rationale(client: AsyncClient) -> None:
+    """Downgrading pii_risk to 'low' is a deliberate decision — it requires a
+    rationale at definition time (invariant 6, no silent downgrade)."""
+    definition = _free_text_definition({"pii_risk": "low"})
+    draft = await _create_draft(client, definition=definition)
+    response = await client.post(f"/surveys/{draft['survey_id']}/versions/1/publish")
+    assert response.status_code == 422
+
+
+async def test_publish_accepts_low_risk_with_rationale(client: AsyncClient) -> None:
+    definition = _free_text_definition({"pii_risk": "low", "pii_risk_rationale": "no PII"})
+    draft = await _create_draft(client, definition=definition)
+    response = await client.post(f"/surveys/{draft['survey_id']}/versions/1/publish")
+    assert response.status_code == 200
+
+
+async def test_publish_rejects_invalid_pii_risk(client: AsyncClient) -> None:
+    definition = _free_text_definition({"pii_risk": "medium"})
+    draft = await _create_draft(client, definition=definition)
+    response = await client.post(f"/surveys/{draft['survey_id']}/versions/1/publish")
+    assert response.status_code == 422

@@ -1,17 +1,25 @@
-"""Seed a 2-question single-select survey and a handful of responses.
+"""Seed the example survey (single-select + free-text) and a handful of responses.
 
 Exercises the real write path (api.survey_engine.service) — including the
-definition-snapshot embedding — so `dbt build` downstream has data spanning all
-three routing states (answered / shown-skipped / routed-past). Used by the M1
-end-to-end verification runbook (docs/verification/m1-slice.md) and by CI.
+definition-snapshot embedding and the PII-risk routing of free-text answers — so
+`dbt build` downstream has data spanning all three routing states (answered /
+shown-skipped / routed-past) and both PII-risk levels. Used by the verification
+runbooks (docs/verification/) and by CI.
 
 Run:  uv run python scripts/seed_example_survey.py
 Honors STELE_DATABASE_URL (CI/prod point it at a least-privileged role).
 
+Questions:
+  q1, q2   single-select (radiogroup)
+  ft_low   free-text, pii_risk='low'  → value reaches marts.value_text
+  ft_high  free-text, pii_risk='high' → redacted in marts; copied to
+           pii.free_text_responses for the reviewer
+
 Expected marts after `dbt build` (printed at the end for the runbook):
-  dim_respondent: 4 · dim_survey_version: 1 · dim_question: 2
-  dim_question_version: 2 · dim_option: 5
-  fact_response_item: 8 (6 with an option_key) · fact_response: 8
+  dim_respondent: 4 · dim_survey_version: 1 · dim_question: 4
+  dim_question_version: 4 · dim_option: 5
+  fact_response_item: 16 (6 with an option_key · 3 with value_text · 4 redacted)
+  fact_response: 16 · pii.free_text_responses: 2
   q1 selections — a:2  b:1  c:1     q2 selections — x:1  y:1
 """
 
@@ -42,19 +50,40 @@ DEFINITION: dict[str, Any] = {
                     "title": "Pick another",
                     "choices": ["x", "y"],
                 },
+                {
+                    "type": "comment",
+                    "name": "ft_low",
+                    "title": "Anything to add? (non-identifying)",
+                    "pii_risk": "low",
+                    "pii_risk_rationale": "open feedback, screened as non-identifying",
+                },
+                {
+                    "type": "comment",
+                    "name": "ft_high",
+                    "title": "Describe your role in your own words",
+                    # pii_risk defaults to 'high' when absent; stated here for clarity.
+                    "pii_risk": "high",
+                },
             ],
         }
     ]
 }
 
-# (shown_questions, payload) per respondent — covers every routing state:
-#   R1, R2: both questions shown and answered
-#   R3:     q2 shown but skipped (in shown-set, absent from payload)
-#   R4:     q2 routed past (absent from shown-set and payload)
+# (shown_questions, payload) per respondent — covers every routing state across
+# both closed-ended and free-text questions:
+#   R1, R2: all four shown and answered
+#   R3:     q2 + ft_high shown but skipped; q1 + ft_low answered
+#   R4:     only q1 shown/answered; q2, ft_low, ft_high routed past
 SUBMISSIONS: list[tuple[list[str], dict[str, str]]] = [
-    (["q1", "q2"], {"q1": "a", "q2": "x"}),
-    (["q1", "q2"], {"q1": "b", "q2": "y"}),
-    (["q1", "q2"], {"q1": "a"}),
+    (
+        ["q1", "q2", "ft_low", "ft_high"],
+        {"q1": "a", "q2": "x", "ft_low": "great", "ft_high": "I lead the platform team"},
+    ),
+    (
+        ["q1", "q2", "ft_low", "ft_high"],
+        {"q1": "b", "q2": "y", "ft_low": "good", "ft_high": "Senior engineer at Acme"},
+    ),
+    (["q1", "q2", "ft_low", "ft_high"], {"q1": "a", "ft_low": "ok"}),
     (["q1"], {"q1": "c"}),
 ]
 

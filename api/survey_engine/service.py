@@ -11,14 +11,26 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.survey_engine.models import RawResponse, Response, ResponseItem, SurveyDefinition
+from api.survey_engine.models import (
+    FreeTextResponse,
+    RawResponse,
+    Response,
+    ResponseItem,
+    SurveyDefinition,
+)
 from api.survey_engine.schemas import ResponseSubmit
+
+# SurveyJS free-text element types. value goes to value_text downstream, routed
+# by pii_risk (design doc §3.9). Other types resolve via options / numeric / date.
+FREE_TEXT_TYPES = frozenset({"text", "comment"})
 
 
 class SurveyNotFound(Exception):
@@ -42,12 +54,72 @@ def canonical_hash(definition: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+@dataclass(frozen=True)
+class FreeTextQuestion:
+    """A free-text question and its PII-risk tagging, read from the definition."""
+
+    name: str
+    pii_risk: str | None
+    pii_risk_rationale: str | None
+
+    @property
+    def effective_risk(self) -> str:
+        # Absent pii_risk defaults to 'high' — the safe path is the default
+        # (design doc §3.9, CLAUDE.md §"silent defaults").
+        return self.pii_risk or "high"
+
+
+def _iter_elements(definition: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    # Both SurveyJS shapes: pages[].elements[] and top-level elements[]. Mirrors
+    # the unnest in dbt's int_survey_elements so API and warehouse agree on what
+    # counts as a question.
+    pages = definition.get("pages")
+    if isinstance(pages, list):
+        for page in pages:
+            if isinstance(page, dict):
+                for element in page.get("elements", []) or []:
+                    if isinstance(element, dict):
+                        yield element
+    for element in definition.get("elements", []) or []:
+        if isinstance(element, dict):
+            yield element
+
+
+def extract_free_text_questions(definition: dict[str, Any]) -> list[FreeTextQuestion]:
+    """Free-text questions (SurveyJS text/comment) with their pii_risk tagging."""
+    questions: list[FreeTextQuestion] = []
+    for element in _iter_elements(definition):
+        if element.get("type") in FREE_TEXT_TYPES and element.get("name"):
+            questions.append(
+                FreeTextQuestion(
+                    name=element["name"],
+                    pii_risk=element.get("pii_risk"),
+                    pii_risk_rationale=element.get("pii_risk_rationale"),
+                )
+            )
+    return questions
+
+
 def validate_definition(definition: dict[str, Any]) -> None:
     # Minimal gate for the slice. Full schema/lint/round-trip checks land in M3.
     if not definition:
         raise InvalidDefinition("definition must be a non-empty object")
     if "pages" not in definition and "elements" not in definition:
         raise InvalidDefinition("definition must contain 'pages' or 'elements'")
+    # Free-text PII gate (invariant 6): pii_risk must be low/high if set, and a
+    # downgrade to 'low' demands an explicit rationale at definition time. Never
+    # silently downgrade — the default is 'high'.
+    for question in extract_free_text_questions(definition):
+        if question.pii_risk is not None and question.pii_risk not in ("low", "high"):
+            raise InvalidDefinition(
+                f"question '{question.name}': pii_risk must be 'low' or 'high', "
+                f"got {question.pii_risk!r}"
+            )
+        if question.effective_risk == "low" and not (question.pii_risk_rationale or "").strip():
+            raise InvalidDefinition(
+                f"question '{question.name}': downgrading pii_risk to 'low' requires a "
+                "non-empty pii_risk_rationale"
+            )
 
 
 async def _get(
@@ -198,6 +270,22 @@ async def submit_response(
 
     for question_name, value in submission.payload.items():
         session.add(ResponseItem(response_id=response.id, question_name=question_name, value=value))
+
+    # Copy high-PII-risk free-text answers into the restricted pii store for the
+    # reviewer (design doc §3.9). The operational read-model above stays a
+    # faithful copy of the payload — same app-schema trust boundary as raw, so
+    # redacting it gains nothing; the analyst boundary is the dbt marts.
+    for question in extract_free_text_questions(survey.definition_json):
+        if question.effective_risk == "high" and question.name in submission.payload:
+            answer = submission.payload[question.name]
+            session.add(
+                FreeTextResponse(
+                    raw_response_id=raw.id,
+                    question_name=question.name,
+                    value_text=None if answer is None else str(answer),
+                    pii_risk="high",
+                )
+            )
 
     await session.commit()
     await session.refresh(response)

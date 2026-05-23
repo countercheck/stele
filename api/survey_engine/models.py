@@ -78,3 +78,24 @@ class ResponseItem(Base):
     response_id: Mapped[int] = mapped_column(BigInteger)
     question_name: Mapped[str] = mapped_column(Text)
     value: Mapped[Any | None] = mapped_column(JSONB, default=None)
+
+
+class FreeTextResponse(Base):
+    """Restricted store for high-PII-risk free-text answers (pii schema).
+
+    Written by the API at submission time; readable only by the PII-cleared
+    role. The analyst-facing marts redact these (value_text null,
+    value_text_redacted true) — design doc §3.9, invariant 6.
+    """
+
+    __tablename__ = "free_text_responses"
+    __table_args__ = {"schema": "pii"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    raw_response_id: Mapped[int] = mapped_column(BigInteger)
+    question_name: Mapped[str] = mapped_column(Text)
+    value_text: Mapped[str | None] = mapped_column(Text, default=None)
+    pii_risk: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )

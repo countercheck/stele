@@ -10,6 +10,10 @@ select
     {{ surrogate_key(['stable_name']) }} as question_id,
     stable_name,
     min(question_type) as question_type,
+    -- Pooled PII-risk for the stable question. min() resolves to 'high' if any
+    -- version is high (the safe direction); per-version truth is in
+    -- int_survey_questions. Null for non-free-text / untagged questions.
+    min(pii_risk) as pii_risk,
     min(published_at) as first_published_at,
     cast(null as text) as parent_question_id,
     cast(null as text) as parent_question_rationale

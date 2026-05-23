@@ -14,12 +14,41 @@ VALID_DEFINITION: dict[str, Any] = {
 }
 
 
-async def _publish_survey(client: AsyncClient) -> tuple[str, str]:
+def _free_text_definition(pii_risk: str | None, *, rationale: str | None = None) -> dict[str, Any]:
+    """A one-question free-text survey, optionally tagged with pii_risk."""
+    element: dict[str, Any] = {"type": "comment", "name": "ft1"}
+    if pii_risk is not None:
+        element["pii_risk"] = pii_risk
+    if rationale is not None:
+        element["pii_risk_rationale"] = rationale
+    return {"pages": [{"name": "p1", "elements": [element]}]}
+
+
+async def _publish_survey(
+    client: AsyncClient, definition: dict[str, Any] | None = None
+) -> tuple[str, str]:
     """Create + publish a survey; return (survey_id, definition_hash)."""
-    created = await client.post("/surveys", json={"definition_json": VALID_DEFINITION})
+    created = await client.post(
+        "/surveys", json={"definition_json": definition or VALID_DEFINITION}
+    )
     survey_id = created.json()["survey_id"]
     published = await client.post(f"/surveys/{survey_id}/versions/1/publish")
     return survey_id, published.json()["definition_hash"]
+
+
+async def _free_text_rows(db_session: AsyncSession, survey_id: str) -> list[tuple[str, str, str]]:
+    rows = (
+        await db_session.execute(
+            text(
+                "SELECT ft.question_name, ft.value_text, ft.pii_risk "
+                "FROM pii.free_text_responses ft "
+                "JOIN app.raw_responses rr ON rr.id = ft.raw_response_id "
+                "WHERE rr.survey_id = :sid"
+            ),
+            {"sid": survey_id},
+        )
+    ).all()
+    return [(r[0], r[1], r[2]) for r in rows]
 
 
 async def test_submit_persists_raw_and_read_model(
@@ -124,3 +153,69 @@ async def test_submit_unknown_survey_404(client: AsyncClient) -> None:
         json={"definition_hash": "x", "payload": {}, "shown_questions": []},
     )
     assert response.status_code == 404
+
+
+async def test_high_risk_freetext_routed_to_pii(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """High-risk free text lands in the restricted pii store, and the operational
+    read-model still keeps a faithful copy of the payload (design doc §3.9)."""
+    definition = _free_text_definition("high")
+    survey_id, definition_hash = await _publish_survey(client, definition)
+
+    await client.post(
+        f"/surveys/{survey_id}/versions/1/responses",
+        json={
+            "definition_hash": definition_hash,
+            "payload": {"ft1": "my secret note"},
+            "shown_questions": ["ft1"],
+        },
+    )
+
+    assert await _free_text_rows(db_session, survey_id) == [("ft1", "my secret note", "high")]
+
+    # response_items keeps the value as-is — same app-schema trust boundary as raw.
+    item_value = (
+        await db_session.execute(
+            text(
+                "SELECT ri.value FROM app.response_items ri "
+                "JOIN app.responses r ON r.id = ri.response_id "
+                "WHERE r.survey_id = :sid AND ri.question_name = 'ft1'"
+            ),
+            {"sid": survey_id},
+        )
+    ).scalar_one()
+    assert item_value == "my secret note"
+
+
+async def test_low_risk_freetext_not_in_pii(client: AsyncClient, db_session: AsyncSession) -> None:
+    definition = _free_text_definition("low", rationale="non-identifying free text")
+    survey_id, definition_hash = await _publish_survey(client, definition)
+
+    await client.post(
+        f"/surveys/{survey_id}/versions/1/responses",
+        json={
+            "definition_hash": definition_hash,
+            "payload": {"ft1": "fine to keep"},
+            "shown_questions": ["ft1"],
+        },
+    )
+
+    assert await _free_text_rows(db_session, survey_id) == []
+
+
+async def test_absent_pii_risk_defaults_high(client: AsyncClient, db_session: AsyncSession) -> None:
+    """No pii_risk tag → treated as high; value routes to the pii store."""
+    definition = _free_text_definition(None)
+    survey_id, definition_hash = await _publish_survey(client, definition)
+
+    await client.post(
+        f"/surveys/{survey_id}/versions/1/responses",
+        json={
+            "definition_hash": definition_hash,
+            "payload": {"ft1": "untagged answer"},
+            "shown_questions": ["ft1"],
+        },
+    )
+
+    assert await _free_text_rows(db_session, survey_id) == [("ft1", "untagged answer", "high")]
