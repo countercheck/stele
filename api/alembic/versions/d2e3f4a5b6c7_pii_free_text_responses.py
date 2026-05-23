@@ -34,7 +34,8 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
         sa.Column("raw_response_id", sa.BigInteger(), nullable=False),
         sa.Column("question_name", sa.Text(), nullable=False),
-        # The free-text answer. Null when the question was shown but skipped.
+        # The free-text answer (copied only when the answer key is present in the
+        # submitted payload).
         sa.Column("value_text", sa.Text(), nullable=True),
         # Always 'high' — this table only holds high-risk values. Stored so the
         # routing decision is auditable next to the value it gated.

@@ -219,3 +219,21 @@ async def test_absent_pii_risk_defaults_high(client: AsyncClient, db_session: As
     )
 
     assert await _free_text_rows(db_session, survey_id) == [("ft1", "untagged answer", "high")]
+
+
+async def test_high_risk_freetext_non_string_is_json_serialized(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    definition = _free_text_definition("high")
+    survey_id, definition_hash = await _publish_survey(client, definition)
+
+    await client.post(
+        f"/surveys/{survey_id}/versions/1/responses",
+        json={
+            "definition_hash": definition_hash,
+            "payload": {"ft1": {"b": 2, "a": 1}},
+            "shown_questions": ["ft1"],
+        },
+    )
+
+    assert await _free_text_rows(db_session, survey_id) == [("ft1", '{"a":1,"b":2}', "high")]

@@ -6,7 +6,7 @@
 -- A row fails when:
 --   - high-risk free text isn't redacted, or leaked a value_text;
 --   - low-risk free text is flagged redacted, or (when answered) value_text does
---     not match the raw answer;
+--     not match the raw answer, or (when unanswered) value_text is populated;
 --   - a non-free-text row carries value_text or is flagged redacted.
 -- Passes when it returns zero rows.
 
@@ -52,6 +52,7 @@ where
         and (
             value_text_redacted = true
             or (answered and value_text is distinct from answer_value)
+            or (not answered and value_text is not null)
         )
     )
     or (

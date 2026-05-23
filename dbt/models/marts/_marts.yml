@@ -81,11 +81,16 @@ models:
                 to: ref('dim_option')
                 field: option_key
       - name: value_text
-        # Free-text answer, populated ONLY for pii_risk='low' questions
-        # (invariant 6). High-risk free text is redacted (null) and lives in
-        # pii.free_text_responses. Routing checked by free_text_redaction_parity.
+        description: >
+          Free-text answer visibility in fact_response_item. Populated only when
+          question_type is text/comment, effective pii_risk is low, and the
+          respondent answered the question. Null for high-risk free text and for
+          unanswered rows (shown-skipped or routed-past).
       - name: value_text_redacted
-        # true for high-risk free-text rows whose text was held back from marts.
+        description: >
+          True only for high-risk free-text rows whose value_text was withheld
+          from this analyst-facing fact table. False for low-risk free text
+          (answered and unanswered) and all non-free-text rows.
         data_tests: [not_null]
 
   - name: fact_response

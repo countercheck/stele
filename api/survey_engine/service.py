@@ -69,6 +69,15 @@ class FreeTextQuestion:
         return self.pii_risk or "high"
 
 
+def _free_text_answer_to_text(answer: Any) -> str | None:
+    if answer is None:
+        return None
+    if isinstance(answer, str):
+        return answer
+    # Keep non-string JSON payload values auditable and stable in storage.
+    return json.dumps(answer, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
 def _iter_elements(definition: dict[str, Any]) -> Iterator[dict[str, Any]]:
     # Both SurveyJS shapes: pages[].elements[] and top-level elements[]. Mirrors
     # the unnest in dbt's int_survey_elements so API and warehouse agree on what
@@ -109,7 +118,13 @@ def validate_definition(definition: dict[str, Any]) -> None:
     # Free-text PII gate (invariant 6): pii_risk must be low/high if set, and a
     # downgrade to 'low' demands an explicit rationale at definition time. Never
     # silently downgrade — the default is 'high'.
+    seen_free_text_names: set[str] = set()
     for question in extract_free_text_questions(definition):
+        if question.name in seen_free_text_names:
+            raise InvalidDefinition(
+                f"duplicate free-text question name {question.name!r} is not allowed"
+            )
+        seen_free_text_names.add(question.name)
         if question.pii_risk is not None and question.pii_risk not in ("low", "high"):
             raise InvalidDefinition(
                 f"question '{question.name}': pii_risk must be 'low' or 'high', "
@@ -282,7 +297,7 @@ async def submit_response(
                 FreeTextResponse(
                     raw_response_id=raw.id,
                     question_name=question.name,
-                    value_text=None if answer is None else str(answer),
+                    value_text=_free_text_answer_to_text(answer),
                     pii_risk="high",
                 )
             )

@@ -135,3 +135,20 @@ async def test_publish_rejects_invalid_pii_risk(client: AsyncClient) -> None:
     draft = await _create_draft(client, definition=definition)
     response = await client.post(f"/surveys/{draft['survey_id']}/versions/1/publish")
     assert response.status_code == 422
+
+
+async def test_publish_rejects_duplicate_free_text_names(client: AsyncClient) -> None:
+    definition = {
+        "pages": [
+            {
+                "name": "p1",
+                "elements": [
+                    {"type": "comment", "name": "ft1", "pii_risk": "high"},
+                    {"type": "comment", "name": "ft1", "pii_risk": "high"},
+                ],
+            }
+        ]
+    }
+    draft = await _create_draft(client, definition=definition)
+    response = await client.post(f"/surveys/{draft['survey_id']}/versions/1/publish")
+    assert response.status_code == 422
