@@ -72,12 +72,14 @@ describe('AdminLayout', () => {
     expect(await screen.findByText('Login screen')).toBeInTheDocument();
   });
 
-  it('shows admins the Surveys + GDPR nav, not PII Review', async () => {
+  it('shows admins the Surveys + GDPR + Users + DB Credentials nav, not PII Review', async () => {
     asRole('admin');
     renderLayout();
     await screen.findByTestId('current-user');
     expect(screen.getByRole('link', { name: 'Surveys' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'GDPR' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Users' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'DB Credentials' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'PII Review' })).not.toBeInTheDocument();
   });
 
@@ -88,6 +90,8 @@ describe('AdminLayout', () => {
     expect(screen.getByRole('link', { name: 'PII Review' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Surveys' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'GDPR' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'DB Credentials' })).not.toBeInTheDocument();
   });
 
   it('shows researchers the Surveys nav only', async () => {
@@ -97,5 +101,7 @@ describe('AdminLayout', () => {
     expect(screen.getByRole('link', { name: 'Surveys' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'GDPR' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'PII Review' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'DB Credentials' })).not.toBeInTheDocument();
   });
 });

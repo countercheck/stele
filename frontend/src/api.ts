@@ -293,6 +293,66 @@ export async function scrubFreeText(id: number, reason?: string): Promise<FreeTe
   );
 }
 
+// --- Operator accounts (admin) ---------------------------------------------
+
+// The three app-layer roles a user can hold (mirrors service.VALID_ROLES). A user
+// can hold any non-empty combination — e.g. researcher + reviewer.
+export const ROLES = ['admin', 'researcher', 'reviewer'] as const;
+export type Role = (typeof ROLES)[number];
+
+export async function listUsers(): Promise<User[]> {
+  return request<User[]>('/admin/users');
+}
+
+// Create an operator account with an admin-set initial password (no invite flow).
+// Throws ApiError(409) if the email is already registered, 422 on an invalid/empty
+// role set.
+export async function createUser(email: string, password: string, roles: string[]): Promise<User> {
+  return request<User>('/admin/users', jsonInit('POST', { email, password, roles }));
+}
+
+// Wholesale-replace a user's roles. Throws ApiError(409) if it would strip the
+// admin role from the last enabled admin, 422 on an invalid/empty set, 404 if gone.
+export async function setUserRoles(userId: number, roles: string[]): Promise<User> {
+  return request<User>(`/admin/users/${userId}/roles`, jsonInit('PUT', { roles }));
+}
+
+// Disable a user; their live sessions stop resolving immediately. Throws
+// ApiError(409) if it would disable the last enabled admin, 404 if gone.
+export async function disableUser(userId: number): Promise<User> {
+  return request<User>(`/admin/users/${userId}/disable`, jsonInit('POST'));
+}
+
+export async function enableUser(userId: number): Promise<User> {
+  return request<User>(`/admin/users/${userId}/enable`, jsonInit('POST'));
+}
+
+// Set a new password; revokes the user's existing sessions. 204, no body.
+export async function resetUserPassword(userId: number, password: string): Promise<void> {
+  await request<void>(`/admin/users/${userId}/reset-password`, jsonInit('POST', { password }));
+}
+
+// --- DB-credential registry (admin, read-only) -----------------------------
+
+// A row of the analyst/reviewer credential registry (metadata only — no password
+// is ever stored). Provisioning/rotation/revocation is the out-of-band CLI's job;
+// the UI only surfaces the audit trail.
+export interface DbCredential {
+  id: number;
+  subject_label: string;
+  access: string;
+  login_role: string;
+  status: string;
+  provisioned_by: number | null;
+  created_at: string;
+  revoked_at: string | null;
+  rotated_at: string | null;
+}
+
+export async function listDbCredentials(): Promise<DbCredential[]> {
+  return request<DbCredential[]>('/admin/db-credentials');
+}
+
 // --- ETL runs (admin) ------------------------------------------------------
 
 // A dbt node that didn't pass, surfaced to explain a failed run.

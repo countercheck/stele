@@ -3,12 +3,14 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { RequireAuth } from '../auth/RequireAuth';
 import { AdminLayout } from './AdminLayout';
+import { DbCredentialsView } from './DbCredentialsView';
 import { EtlView } from './EtlView';
 import { GdprView } from './GdprView';
 import { LoginView } from './LoginView';
 import { PiiReviewView } from './PiiReviewView';
 import { SurveyEditorView } from './SurveyEditorView';
 import { SurveyListView } from './SurveyListView';
+import { UsersView } from './UsersView';
 
 /**
  * Role-aware landing for "/admin". A reviewer who can't also author surveys (the
@@ -44,6 +46,8 @@ export default function AdminApp() {
             <Route path="surveys/:surveyId/versions/:version" element={<SurveyEditorView />} />
             <Route path="gdpr" element={<GdprView />} />
             <Route path="etl" element={<EtlView />} />
+            <Route path="users" element={<UsersView />} />
+            <Route path="db-credentials" element={<DbCredentialsView />} />
             <Route path="pii-review" element={<PiiReviewView />} />
           </Route>
         </Route>

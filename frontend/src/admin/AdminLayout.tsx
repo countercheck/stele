@@ -44,6 +44,16 @@ export function AdminLayout() {
                 GDPR
               </NavLink>
             ) : null}
+            {user?.roles.includes('admin') ? (
+              <NavLink to="/admin/users" className={navLinkClass}>
+                Users
+              </NavLink>
+            ) : null}
+            {user?.roles.includes('admin') ? (
+              <NavLink to="/admin/db-credentials" className={navLinkClass}>
+                DB Credentials
+              </NavLink>
+            ) : null}
             {user?.roles.includes('reviewer') ? (
               <NavLink to="/admin/pii-review" className={navLinkClass}>
                 PII Review
