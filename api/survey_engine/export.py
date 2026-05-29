@@ -101,13 +101,28 @@ async def fetch_survey_export_rows(
 
 def _cell(value: Any) -> Any:
     """Render one value for CSV: blank for NULL, lowercase for booleans, else
-    as-is (csv stringifies uuid/int/Decimal). Values are emitted verbatim — no
-    Excel formula-injection neutralizing — because mangling cells would corrupt
-    a faithful analytical export whose consumers are pandas/R, not Excel."""
+    as-is (csv stringifies uuid/int/Decimal)."""
     if value is None:
         return ""
     if isinstance(value, bool):
         return "true" if value else "false"
+    return value
+
+
+# Leading characters a spreadsheet treats as the start of a formula. A cell
+# beginning with one of these can execute when the CSV is opened in Excel/Sheets.
+_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _escape_formula(value: str) -> str:
+    """Neutralize CSV/Excel formula injection by prefixing a literal apostrophe,
+    which spreadsheets render as text. Applied ONLY to free-text answers — the one
+    column carrying untrusted respondent input — so typed numeric/date answers
+    (e.g. a legitimate -5) and author-defined option values stay verbatim. The
+    apostrophe is invisible in a spreadsheet but is part of the string to pandas/R;
+    that small cost buys safety on the only field an attacker controls."""
+    if value.startswith(_FORMULA_LEAD):
+        return "'" + value
     return value
 
 
@@ -129,5 +144,15 @@ def iter_csv(rows: Sequence[Mapping[str, Any]]) -> Iterator[str]:
     writer.writerow(EXPORT_COLUMNS)
     yield flush()
     for row in rows:
-        writer.writerow([_cell(row[column]) for column in EXPORT_COLUMNS])
+        free_text = row["value_kind"] == "text"
+        cells = []
+        for column in EXPORT_COLUMNS:
+            cell = _cell(row[column])
+            # answer is the only column carrying untrusted respondent input, and
+            # only when the question is free text; harden just that against
+            # formula injection so typed/author-defined cells stay verbatim.
+            if column == "answer" and free_text and isinstance(cell, str):
+                cell = _escape_formula(cell)
+            cells.append(cell)
+        writer.writerow(cells)
         yield flush()

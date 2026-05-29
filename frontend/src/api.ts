@@ -210,7 +210,10 @@ export async function downloadSurveyExport(surveyId: string): Promise<void> {
     anchor.click();
     anchor.remove();
   } finally {
-    URL.revokeObjectURL(url);
+    // Defer revocation past the current tick: revoking the blob URL synchronously
+    // after click() can cancel the download before the browser (notably Safari)
+    // has started reading it.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 }
 

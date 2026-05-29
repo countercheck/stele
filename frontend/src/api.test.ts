@@ -114,6 +114,7 @@ describe('auth + authoring calls', () => {
 
 describe('downloadSurveyExport', () => {
   it('fetches the export and triggers a browser download', async () => {
+    vi.useFakeTimers();
     const blob = new Blob(['csv'], { type: 'text/csv' });
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -132,10 +133,13 @@ describe('downloadSurveyExport', () => {
       expect(fetchMock).toHaveBeenCalledWith('/api/surveys/abc/export');
       expect(createObjectURL).toHaveBeenCalledWith(blob);
       expect(clickSpy).toHaveBeenCalledOnce();
-      // The object URL is always released, even though the download is async.
+      // Revocation is deferred to the next tick so the download can start first.
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+      vi.runAllTimers();
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock');
     } finally {
       clickSpy.mockRestore();
+      vi.useRealTimers();
     }
   });
 

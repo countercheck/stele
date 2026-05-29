@@ -39,6 +39,25 @@ def _parse(csv_text: str) -> list[dict[str, str]]:
     return [dict(zip(EXPORT_COLUMNS, r, strict=True)) for r in rows[1:]]
 
 
+def _row(**over: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "respondent_id": "r1",
+        "survey_id": "s1",
+        "survey_version": 1,
+        "question": "q",
+        "prompt_text": "P?",
+        "value_kind": "text",
+        "occurrence": 1,
+        "answer": None,
+        "option_label": None,
+        "was_shown": True,
+        "value_text_redacted": False,
+        "rank": None,
+    }
+    base.update(over)
+    return base
+
+
 # --- iter_csv (pure) -------------------------------------------------------
 
 
@@ -128,6 +147,24 @@ def test_iter_csv_renders_values_distinctly() -> None:
     assert by_q["followup"]["answer"] == ""
     assert by_q["followup"]["was_shown"] == "false"
     assert by_q["followup"]["value_text_redacted"] == "false"
+
+
+def test_iter_csv_escapes_formula_injection_in_free_text_only() -> None:
+    rows = [
+        # Untrusted free text that a spreadsheet would run as a formula → neutralized.
+        _row(question="evil", value_kind="text", answer="=cmd|'/c calc'!A1"),
+        _row(question="hyperlink", value_kind="text", answer="@SUM(1+1)"),
+        # A typed numeric answer that legitimately leads with '-' stays verbatim.
+        _row(question="rating", value_kind="numeric", answer="-5"),
+        # An author-defined option value is trusted input — left as-is.
+        _row(question="choice", value_kind="option", answer="-maybe", option_label="Maybe"),
+    ]
+    by_q = {r["question"]: r for r in _parse("".join(iter_csv(rows)))}
+
+    assert by_q["evil"]["answer"] == "'=cmd|'/c calc'!A1"
+    assert by_q["hyperlink"]["answer"] == "'@SUM(1+1)"
+    assert by_q["rating"]["answer"] == "-5"
+    assert by_q["choice"]["answer"] == "-maybe"
 
 
 # --- endpoint (marts read stubbed) -----------------------------------------
