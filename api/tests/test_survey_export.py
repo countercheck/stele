@@ -19,6 +19,7 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_analyst_session
@@ -328,9 +329,17 @@ async def test_export_known_survey_no_rows_is_header_only(
 
 
 async def _marts_built(session: AsyncSession) -> bool:
-    return (
-        await session.execute(text("select to_regclass('marts.fact_response_item')"))
-    ).scalar() is not None
+    # to_regclass returns NULL when the table is absent — but only if the role can
+    # see the schema. In the bare CI pytest job the connecting role (stele_api) has
+    # no marts grant, so the probe raises permission-denied instead; treat that (and
+    # an undefined schema) as "not built" and skip. The savepoint keeps the outer
+    # test transaction usable after the rolled-back error.
+    try:
+        async with session.begin_nested():
+            result = await session.execute(text("select to_regclass('marts.fact_response_item')"))
+        return result.scalar() is not None
+    except ProgrammingError:
+        return False
 
 
 @pytest.mark.usefixtures("_analyst_override")
