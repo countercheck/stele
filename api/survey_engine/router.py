@@ -140,6 +140,7 @@ async def export_survey_responses(
     survey_id: uuid.UUID,
     session: SessionDep,
     analyst: AnalystSessionDep,
+    excel_safe: bool = False,
 ) -> StreamingResponse:
     """Download a survey's responses as a tidy/long CSV (one row per selection).
 
@@ -147,14 +148,22 @@ async def export_survey_responses(
     it reflects the last ETL build and carries no un-promoted PII. 404 if the
     survey is unknown; a known survey with no warehouse rows yields a header-only
     CSV rather than an error.
+
+    ``excel_safe=true`` neutralizes spreadsheet formula injection in free-text
+    answers for the Excel/Sheets-targeted download; the default stays faithful.
     """
     if not await service.survey_exists(session, survey_id):
         raise HTTPException(status_code=404, detail="survey not found")
     rows = await export.fetch_survey_export_rows(analyst, survey_id)
+    suffix = "-excel" if excel_safe else ""
     return StreamingResponse(
-        export.iter_csv(rows),
+        export.iter_csv(rows, excel_safe=excel_safe),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="survey-{survey_id}-responses.csv"'},
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="survey-{survey_id}-responses{suffix}.csv"'
+            )
+        },
     )
 
 

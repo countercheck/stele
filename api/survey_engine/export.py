@@ -126,8 +126,13 @@ def _escape_formula(value: str) -> str:
     return value
 
 
-def iter_csv(rows: Sequence[Mapping[str, Any]]) -> Iterator[str]:
+def iter_csv(rows: Sequence[Mapping[str, Any]], *, excel_safe: bool = False) -> Iterator[str]:
     """Yield the export as CSV text: a header row, then one row per selection.
+
+    Default output is faithful — values verbatim, the right choice for pandas/R.
+    ``excel_safe=True`` neutralizes formula injection in free-text answers (see
+    _escape_formula) for the separate spreadsheet-targeted download; it is opt-in
+    because the apostrophe it adds is a (small) corruption for programmatic readers.
 
     A survey with no warehouse rows (ETL not yet run, or no responses) yields
     just the header — an empty-but-valid CSV, not an error.
@@ -144,14 +149,13 @@ def iter_csv(rows: Sequence[Mapping[str, Any]]) -> Iterator[str]:
     writer.writerow(EXPORT_COLUMNS)
     yield flush()
     for row in rows:
+        # answer is the only column carrying untrusted respondent input, and only
+        # when the question is free text; hardening targets just that cell.
         free_text = row["value_kind"] == "text"
         cells = []
         for column in EXPORT_COLUMNS:
             cell = _cell(row[column])
-            # answer is the only column carrying untrusted respondent input, and
-            # only when the question is free text; harden just that against
-            # formula injection so typed/author-defined cells stay verbatim.
-            if column == "answer" and free_text and isinstance(cell, str):
+            if excel_safe and column == "answer" and free_text and isinstance(cell, str):
                 cell = _escape_formula(cell)
             cells.append(cell)
         writer.writerow(cells)

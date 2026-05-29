@@ -192,9 +192,14 @@ export async function clearSurveyShortCode(surveyId: string): Promise<void> {
 // Download a survey's responses as a tidy/long CSV (the marts export). Not routed
 // through request() because the body is a file, not JSON: fetch directly, surface
 // a 401 through the shared handler, then trigger a browser download via a
-// temporary object URL.
-export async function downloadSurveyExport(surveyId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/surveys/${surveyId}/export`);
+// temporary object URL. `excelSafe` requests the spreadsheet-targeted variant,
+// which neutralizes formula injection in free-text answers.
+export async function downloadSurveyExport(
+  surveyId: string,
+  opts: { excelSafe?: boolean } = {},
+): Promise<void> {
+  const query = opts.excelSafe ? '?excel_safe=true' : '';
+  const res = await fetch(`${API_BASE}/surveys/${surveyId}/export${query}`);
   if (!res.ok) {
     if (res.status === 401) unauthorizedHandler?.();
     const detail = await errorDetail(res);
@@ -205,7 +210,7 @@ export async function downloadSurveyExport(surveyId: string): Promise<void> {
   try {
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `survey-${surveyId}-responses.csv`;
+    anchor.download = `survey-${surveyId}-responses${opts.excelSafe ? '-excel' : ''}.csv`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();

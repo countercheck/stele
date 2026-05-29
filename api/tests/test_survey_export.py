@@ -149,7 +149,14 @@ def test_iter_csv_renders_values_distinctly() -> None:
     assert by_q["followup"]["value_text_redacted"] == "false"
 
 
-def test_iter_csv_escapes_formula_injection_in_free_text_only() -> None:
+def test_iter_csv_faithful_by_default_keeps_formula_verbatim() -> None:
+    # Default export is faithful: a formula-leading free-text answer is NOT mangled.
+    rows = [_row(question="evil", value_kind="text", answer="=cmd|'/c calc'!A1")]
+    by_q = {r["question"]: r for r in _parse("".join(iter_csv(rows)))}
+    assert by_q["evil"]["answer"] == "=cmd|'/c calc'!A1"
+
+
+def test_iter_csv_excel_safe_escapes_formula_in_free_text_only() -> None:
     rows = [
         # Untrusted free text that a spreadsheet would run as a formula → neutralized.
         _row(question="evil", value_kind="text", answer="=cmd|'/c calc'!A1"),
@@ -159,7 +166,7 @@ def test_iter_csv_escapes_formula_injection_in_free_text_only() -> None:
         # An author-defined option value is trusted input — left as-is.
         _row(question="choice", value_kind="option", answer="-maybe", option_label="Maybe"),
     ]
-    by_q = {r["question"]: r for r in _parse("".join(iter_csv(rows)))}
+    by_q = {r["question"]: r for r in _parse("".join(iter_csv(rows, excel_safe=True)))}
 
     assert by_q["evil"]["answer"] == "'=cmd|'/c calc'!A1"
     assert by_q["hyperlink"]["answer"] == "'@SUM(1+1)"
@@ -256,6 +263,48 @@ async def test_export_streams_csv_with_disposition(
     assert len(parsed) == 1
     assert parsed[0]["question"] == "q1"
     assert parsed[0]["answer"] == "a"
+
+
+@pytest.mark.usefixtures("_analyst_override")
+async def test_export_excel_safe_escapes_and_names_file(
+    authed_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    survey_id = await _create_survey(authed_client)
+    danger = [
+        {
+            "respondent_id": "r1",
+            "survey_id": survey_id,
+            "survey_version": 1,
+            "question": "comment",
+            "prompt_text": "Comment?",
+            "value_kind": "text",
+            "occurrence": 1,
+            "answer": "=HYPERLINK(0)",
+            "option_label": None,
+            "was_shown": True,
+            "value_text_redacted": False,
+            "rank": None,
+        }
+    ]
+
+    async def _stub(_session: AsyncSession, _survey_id: uuid.UUID) -> list[dict[str, Any]]:
+        return danger
+
+    monkeypatch.setattr(export, "fetch_survey_export_rows", _stub)
+
+    # excel_safe neutralizes the formula and names the file distinctly.
+    safe = await authed_client.get(f"/surveys/{survey_id}/export?excel_safe=true")
+    assert safe.status_code == 200
+    assert safe.headers["content-disposition"] == (
+        f'attachment; filename="survey-{survey_id}-responses-excel.csv"'
+    )
+    assert _parse(safe.text)[0]["answer"] == "'=HYPERLINK(0)"
+
+    # The default download stays faithful.
+    plain = await authed_client.get(f"/surveys/{survey_id}/export")
+    assert _parse(plain.text)[0]["answer"] == "=HYPERLINK(0)"
+    assert "-excel" not in plain.headers["content-disposition"]
 
 
 @pytest.mark.usefixtures("_analyst_override")

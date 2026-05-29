@@ -60,7 +60,7 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(survey?.short_code ?? '');
   const [busy, setBusy] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<null | 'plain' | 'excel'>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // Holds the "Copied!" reset timer so we can cancel it if the card unmounts
@@ -120,12 +120,12 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
       .finally(() => setBusy(false));
   };
 
-  const handleExport = (): void => {
-    setExporting(true);
+  const handleExport = (excelSafe: boolean): void => {
+    setExporting(excelSafe ? 'excel' : 'plain');
     setError(null);
-    downloadSurveyExport(survey.survey_id)
+    downloadSurveyExport(survey.survey_id, { excelSafe })
       .catch((err: unknown) => setError(errorMessage(err)))
-      .finally(() => setExporting(false));
+      .finally(() => setExporting(null));
   };
 
   return (
@@ -212,11 +212,21 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
               type="button"
               size="sm"
               variant="secondary"
-              onClick={handleExport}
-              disabled={exporting}
+              onClick={() => handleExport(false)}
+              disabled={exporting !== null}
               title="Download all responses as CSV (from the last ETL build)"
             >
-              {exporting ? 'Exporting…' : 'Export CSV'}
+              {exporting === 'plain' ? 'Exporting…' : 'Export CSV'}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => handleExport(true)}
+              disabled={exporting !== null}
+              title="CSV with spreadsheet formula injection neutralized — for opening in Excel or Google Sheets"
+            >
+              {exporting === 'excel' ? 'Exporting…' : 'Excel-safe CSV'}
             </Button>
           </>
         )}

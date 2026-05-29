@@ -143,6 +143,28 @@ describe('downloadSurveyExport', () => {
     }
   });
 
+  it('requests the excel-safe variant when asked', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      blob: () => Promise.resolve(new Blob(['csv'])),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('URL', { createObjectURL: vi.fn(), revokeObjectURL: vi.fn() });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    try {
+      await downloadSurveyExport('abc', { excelSafe: true });
+      expect(fetchMock).toHaveBeenCalledWith('/api/surveys/abc/export?excel_safe=true');
+      // Flush the deferred revoke while URL is still stubbed (else it fires post-teardown).
+      vi.runAllTimers();
+    } finally {
+      clickSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('fires the unauthorized handler and throws on a 401', async () => {
     const onUnauthorized = vi.fn();
     setUnauthorizedHandler(onUnauthorized);

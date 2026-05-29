@@ -202,14 +202,24 @@ describe('SurveyListView short codes', () => {
 });
 
 describe('SurveyListView export', () => {
-  it('downloads the survey CSV when Export CSV is clicked', async () => {
+  it('downloads the faithful CSV when Export CSV is clicked', async () => {
     mockedList.mockResolvedValue([row({ survey_id: 'sid' })]);
     mockedExport.mockResolvedValue(undefined);
     renderList();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Export CSV' }));
 
-    expect(mockedExport).toHaveBeenCalledWith('sid');
+    expect(mockedExport).toHaveBeenCalledWith('sid', { excelSafe: false });
+  });
+
+  it('requests the excel-safe variant from the Excel-safe button', async () => {
+    mockedList.mockResolvedValue([row({ survey_id: 'sid' })]);
+    mockedExport.mockResolvedValue(undefined);
+    renderList();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Excel-safe CSV' }));
+
+    expect(mockedExport).toHaveBeenCalledWith('sid', { excelSafe: true });
   });
 
   it('surfaces an error when the export fails', async () => {
