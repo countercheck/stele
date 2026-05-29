@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   clearSurveyShortCode,
   createSurvey,
+  downloadSurveyExport,
   listSurveys,
   setSurveyShortCode,
   type SurveySummary,
@@ -59,6 +60,7 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(survey?.short_code ?? '');
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // Holds the "Copied!" reset timer so we can cancel it if the card unmounts
@@ -116,6 +118,14 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
       })
       .catch((err: unknown) => setError(errorMessage(err)))
       .finally(() => setBusy(false));
+  };
+
+  const handleExport = (): void => {
+    setExporting(true);
+    setError(null);
+    downloadSurveyExport(survey.survey_id)
+      .catch((err: unknown) => setError(errorMessage(err)))
+      .finally(() => setExporting(false));
   };
 
   return (
@@ -197,6 +207,16 @@ function SurveyCard({ versions }: { versions: SurveySummary[] }) {
               title={link ? link : 'Publish a version to get a shareable link'}
             >
               {copied ? 'Copied!' : 'Copy link'}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={handleExport}
+              disabled={exporting}
+              title="Download all responses as CSV (from the last ETL build)"
+            >
+              {exporting ? 'Exporting…' : 'Export CSV'}
             </Button>
           </>
         )}

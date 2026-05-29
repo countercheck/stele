@@ -315,7 +315,7 @@ def normalize_short_code(raw: str) -> str:
     return code
 
 
-async def _survey_exists(session: AsyncSession, survey_id: uuid.UUID) -> bool:
+async def survey_exists(session: AsyncSession, survey_id: uuid.UUID) -> bool:
     return (
         await session.execute(
             select(SurveyDefinition.id).where(SurveyDefinition.survey_id == survey_id).limit(1)
@@ -334,7 +334,7 @@ async def set_short_code(
     constraint is the real guard against a concurrent claim; the pre-check just
     yields a clean error on the common path).
     """
-    if not await _survey_exists(session, survey_id):
+    if not await survey_exists(session, survey_id):
         raise SurveyNotFound(str(survey_id))
     code = normalize_short_code(raw_code)
 

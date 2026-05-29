@@ -13,7 +13,11 @@
 # Trailing arguments pass through, e.g. `etl -- --select dim_question`.
 #
 # Connection/secret env (supplied by the deploy, not baked in):
-#   web      STELE_DATABASE_URL (stele_api role), STELE_SESSION_SECRET, STELE_COOKIE_SECURE
+#   web      STELE_DATABASE_URL (stele_api role), STELE_SESSION_SECRET, STELE_COOKIE_SECURE.
+#            STELE_ANALYST_DATABASE_URL (stele_analyst role) for the marts-backed
+#            survey CSV export — stele_api has no marts grant, so without it the
+#            export 500s; falls back to STELE_DATABASE_URL (fine only where that
+#            role can read marts, i.e. the dev/CI superuser).
 #   seed     STELE_DATABASE_URL (stele_api role) + STELE_ADMIN_EMAIL/STELE_ADMIN_PASSWORD.
 #            A one-off (e.g. `railway run … seed`): seeds ONLY the initial admin
 #            login (idempotent), never example surveys — synthetic respondents must

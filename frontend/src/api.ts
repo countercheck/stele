@@ -189,6 +189,31 @@ export async function clearSurveyShortCode(surveyId: string): Promise<void> {
   await request<void>(`/surveys/${surveyId}/short-code`, { method: 'DELETE' });
 }
 
+// Download a survey's responses as a tidy/long CSV (the marts export). Not routed
+// through request() because the body is a file, not JSON: fetch directly, surface
+// a 401 through the shared handler, then trigger a browser download via a
+// temporary object URL.
+export async function downloadSurveyExport(surveyId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/surveys/${surveyId}/export`);
+  if (!res.ok) {
+    if (res.status === 401) unauthorizedHandler?.();
+    const detail = await errorDetail(res);
+    throw new ApiError(res.status, detail ?? `export failed (${res.status})`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `survey-${surveyId}-responses.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 // --- GDPR / erasure (admin) ------------------------------------------------
 
 // A row from the pii.withdrawals erasure audit.

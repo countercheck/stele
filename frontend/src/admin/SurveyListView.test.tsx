@@ -12,14 +12,21 @@ vi.mock('../api', async (importOriginal) => ({
   createSurvey: vi.fn(),
   setSurveyShortCode: vi.fn(),
   clearSurveyShortCode: vi.fn(),
+  downloadSurveyExport: vi.fn(),
 }));
 
-const { listSurveys, createSurvey, setSurveyShortCode, clearSurveyShortCode } =
-  await import('../api');
+const {
+  listSurveys,
+  createSurvey,
+  setSurveyShortCode,
+  clearSurveyShortCode,
+  downloadSurveyExport,
+} = await import('../api');
 const mockedList = vi.mocked(listSurveys);
 const mockedCreate = vi.mocked(createSurvey);
 const mockedSetCode = vi.mocked(setSurveyShortCode);
 const mockedClearCode = vi.mocked(clearSurveyShortCode);
+const mockedExport = vi.mocked(downloadSurveyExport);
 
 // A SurveySummary row with sensible defaults; override per test.
 function row(overrides: Partial<SurveySummary> = {}): SurveySummary {
@@ -191,5 +198,27 @@ describe('SurveyListView short codes', () => {
 
     expect(mockedClearCode).toHaveBeenCalledWith('aaa');
     await waitFor(() => expect(screen.getByText('none')).toBeInTheDocument());
+  });
+});
+
+describe('SurveyListView export', () => {
+  it('downloads the survey CSV when Export CSV is clicked', async () => {
+    mockedList.mockResolvedValue([row({ survey_id: 'sid' })]);
+    mockedExport.mockResolvedValue(undefined);
+    renderList();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Export CSV' }));
+
+    expect(mockedExport).toHaveBeenCalledWith('sid');
+  });
+
+  it('surfaces an error when the export fails', async () => {
+    mockedList.mockResolvedValue([row()]);
+    mockedExport.mockRejectedValue(new Error('export failed (500)'));
+    renderList();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Export CSV' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('export failed (500)');
   });
 });

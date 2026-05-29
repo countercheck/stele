@@ -5,10 +5,11 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from api.auth.deps import require_role
-from api.db import SessionDep
-from api.survey_engine import service
+from api.db import AnalystSessionDep, SessionDep
+from api.survey_engine import export, service
 from api.survey_engine.schemas import (
     ResponseSubmit,
     ResponseSubmitOut,
@@ -132,6 +133,29 @@ async def clear_short_code(survey_id: uuid.UUID, session: SessionDep) -> None:
     # Idempotent: clearing a survey with no code is still a 204 (the resource is
     # absent either way), so the UI needn't special-case it.
     await service.clear_short_code(session, survey_id)
+
+
+@router.get("/{survey_id}/export", dependencies=[_author_only])
+async def export_survey_responses(
+    survey_id: uuid.UUID,
+    session: SessionDep,
+    analyst: AnalystSessionDep,
+) -> StreamingResponse:
+    """Download a survey's responses as a tidy/long CSV (one row per selection).
+
+    Reads the marts warehouse over the analyst connection (stele_api can't), so
+    it reflects the last ETL build and carries no un-promoted PII. 404 if the
+    survey is unknown; a known survey with no warehouse rows yields a header-only
+    CSV rather than an error.
+    """
+    if not await service.survey_exists(session, survey_id):
+        raise HTTPException(status_code=404, detail="survey not found")
+    rows = await export.fetch_survey_export_rows(analyst, survey_id)
+    return StreamingResponse(
+        export.iter_csv(rows),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="survey-{survey_id}-responses.csv"'},
+    )
 
 
 @router.get("/by-code/{short_code}", response_model=ShortCodeResolved)

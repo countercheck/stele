@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
   clearEtlRun,
+  downloadSurveyExport,
   fetchSurvey,
   getEtlRun,
   listEtlRuns,
@@ -108,6 +109,50 @@ describe('auth + authoring calls', () => {
       '/api/surveys/s/versions/1/publish',
       expect.objectContaining({ method: 'POST' }),
     );
+  });
+});
+
+describe('downloadSurveyExport', () => {
+  it('fetches the export and triggers a browser download', async () => {
+    const blob = new Blob(['csv'], { type: 'text/csv' });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      blob: () => Promise.resolve(blob),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    const createObjectURL = vi.fn().mockReturnValue('blob:mock');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    try {
+      await downloadSurveyExport('abc');
+
+      expect(fetchMock).toHaveBeenCalledWith('/api/surveys/abc/export');
+      expect(createObjectURL).toHaveBeenCalledWith(blob);
+      expect(clickSpy).toHaveBeenCalledOnce();
+      // The object URL is always released, even though the download is async.
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock');
+    } finally {
+      clickSpy.mockRestore();
+    }
+  });
+
+  it('fires the unauthorized handler and throws on a 401', async () => {
+    const onUnauthorized = vi.fn();
+    setUnauthorizedHandler(onUnauthorized);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({}),
+      } as unknown as Response),
+    );
+
+    await expect(downloadSurveyExport('abc')).rejects.toMatchObject({ status: 401 });
+    expect(onUnauthorized).toHaveBeenCalledOnce();
   });
 });
 
