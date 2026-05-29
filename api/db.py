@@ -24,8 +24,10 @@ def get_analyst_database_url() -> str:
     stele_api has no marts grant by design (CLAUDE.md schema table): the
     operational role can't read the warehouse. Analytical reads — the survey
     export — go over a separate connection as stele_analyst, which reads marts
-    only. Falls back to the main URL so the dev-container superuser (which can
-    read everything) just works; CI and prod set this to stele_analyst.
+    only. Falls back to the main URL so the dev-container superuser just works;
+    prod sets it to stele_analyst. CI leaves it unset (the fallback) — the
+    export's marts read isn't exercised there, so the e2e test skips under
+    stele_api rather than relying on this connection.
     """
     return os.environ.get("STELE_ANALYST_DATABASE_URL", get_database_url())
 

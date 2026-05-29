@@ -162,6 +162,9 @@ def test_iter_csv_excel_safe_escapes_formula_in_free_text_only() -> None:
         # Untrusted free text that a spreadsheet would run as a formula → neutralized.
         _row(question="evil", value_kind="text", answer="=cmd|'/c calc'!A1"),
         _row(question="hyperlink", value_kind="text", answer="@SUM(1+1)"),
+        # Leading whitespace before the trigger: some importers trim it then evaluate.
+        _row(question="spaced", value_kind="text", answer=" =1+1"),
+        _row(question="tabbed", value_kind="text", answer="\t@cmd"),
         # A typed numeric answer that legitimately leads with '-' stays verbatim.
         _row(question="rating", value_kind="numeric", answer="-5"),
         # An author-defined option value is trusted input — left as-is.
@@ -171,6 +174,8 @@ def test_iter_csv_excel_safe_escapes_formula_in_free_text_only() -> None:
 
     assert by_q["evil"]["answer"] == "'=cmd|'/c calc'!A1"
     assert by_q["hyperlink"]["answer"] == "'@SUM(1+1)"
+    assert by_q["spaced"]["answer"] == "' =1+1"
+    assert by_q["tabbed"]["answer"] == "'\t@cmd"
     assert by_q["rating"]["answer"] == "-5"
     assert by_q["choice"]["answer"] == "-maybe"
 

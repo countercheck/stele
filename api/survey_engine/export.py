@@ -109,9 +109,10 @@ def _cell(value: Any) -> Any:
     return value
 
 
-# Leading characters a spreadsheet treats as the start of a formula. A cell
-# beginning with one of these can execute when the CSV is opened in Excel/Sheets.
-_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+# Characters a spreadsheet treats as the start of a formula. Leading whitespace is
+# stripped before the check because some importers trim it and then evaluate, so a
+# tab/space/newline before the trigger (e.g. " =1+1") is still dangerous.
+_FORMULA_LEAD = ("=", "+", "-", "@")
 
 
 def _escape_formula(value: str) -> str:
@@ -121,7 +122,7 @@ def _escape_formula(value: str) -> str:
     (e.g. a legitimate -5) and author-defined option values stay verbatim. The
     apostrophe is invisible in a spreadsheet but is part of the string to pandas/R;
     that small cost buys safety on the only field an attacker controls."""
-    if value.startswith(_FORMULA_LEAD):
+    if value.lstrip().startswith(_FORMULA_LEAD):
         return "'" + value
     return value
 
