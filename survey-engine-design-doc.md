@@ -85,7 +85,8 @@ Out of scope: respondent recruitment, IRB processes, statistical methodology, da
 
 **FR-5. Response capture.** On submission, the system records:
 - The full SurveyJS response payload, unmodified.
-- The shown-set as reported by the SurveyJS engine.
+- The shown-set as reported by the SurveyJS engine, **in render order** (the top-to-bottom order the respondent actually saw across all visited pages).
+- For any question whose options were randomized, the rendered choice order per question.
 - A reference to the exact published version (by hash).
 - Server timestamp and client metadata.
 
@@ -101,6 +102,8 @@ Out of scope: respondent recruitment, IRB processes, statistical methodology, da
 **FR-9. Cross-version equivalence (opt-in).** Researchers can declare that a question in a later version is a semantic continuation of an earlier one, with a recorded rationale. Default analytical behavior treats versions as distinct; pooling requires explicit opt-in via a derived canonical key.
 
 **FR-10. Analytical access.** Analysts can query the warehouse via SQL (Postgres), with predictable joins between fact and dimension tables. R via `DBI`/`dbplyr` and Python notebook environments are first-class.
+
+**FR-13. Randomization with per-respondent display-order capture.** The runtime supports shuffling within the published type surface: question order within a page (`Page.questionsOrder: 'random'`), row order within a matrix (`Matrix.rowsOrder: 'random'`), and choice order within a single/multi-select/ranking question (`choicesOrder: 'random'`). The construct-block-aware case emerges from putting a block's items inside a randomized container (typically a matrix; §3.5 "Construct membership"). For every randomized question, the order the respondent actually saw is captured at submission time, never reconstructed downstream, so order effects are analyzable. Survey-level page randomization and static-panel randomization are deferred (§5).
 
 **FR-11. ETL reproducibility.** The full marts schema can be rebuilt from `raw_responses` with a single command. Every ETL run is logged with row counts, timings, and reproducibility metadata.
 
@@ -227,7 +230,8 @@ Append-only audit log. **Sole source of truth for ETL.**
 | `survey_id`, `survey_version` | Identifies the exact published definition answered |
 | `submitted_at` | Server timestamp |
 | `payload` | Raw SurveyJS response JSON (jsonb) |
-| `shown_questions` | jsonb array of `question_id`s actually rendered; written by the API at submission time from the SurveyJS engine's own visibility state |
+| `shown_questions` | jsonb array of `question_id`s actually rendered, **in render order** (the top-to-bottom order the respondent saw across all visited pages); written by the API at submission time from the SurveyJS engine's own visibility state. Pre-FR-13 responses, where no randomization existed, are already in render order by construction (definition order = render order), so the spec change is forward-only and needs no backfill. |
+| `shown_choice_orders` | jsonb. Optional map `{question_name: [option_value, …]}` recording the rendered choice order *per question whose options were randomized*. Captured at submission time. Sparse: omits questions whose `choicesOrder` was not random, since for them render order equals definition order and `dim_option.display_order` already encodes it. |
 | `client_metadata` | User agent, locale, etc. (jsonb) |
 | `definition_snapshot` | jsonb. Frozen copy of the published definition (the SurveyJS JSON plus its `definition_hash` and `published_at`) the response was answered against. Written by the API at submission time. |
 
@@ -316,6 +320,7 @@ erDiagram
         date value_date
         boolean was_shown
         int rank
+        int display_order
     }
 ```
 
@@ -374,6 +379,33 @@ Inheritance rule for the composite types: a `construct_block` on a matrix or pan
 
 The columns live on `dim_question` (the stable abstraction), not `dim_question_version`, because construct membership — like cross-version equivalence above — is about the question as a construct, not about a specific rendering of it.
 
+#### Randomization and display-order capture
+
+Surveys may shuffle what each respondent sees. The supported mechanisms are SurveyJS-native and constrained to the question-type surface the publish gate accepts; the warehouse contribution is **recording, per respondent, the order they actually saw**, never reconstructing it.
+
+| Mechanism | Authored as | Scope |
+|---|---|---|
+| Question order within a page | `Page.questionsOrder: 'random'` | The questions on that page are shuffled per respondent; questions on other pages are unaffected. |
+| Row order within a matrix | `Matrix.rowsOrder: 'random'` | The matrix's row sub-questions are shuffled per respondent. The container's column order (the response scale) is unaffected. |
+| Choice order within a question | `SelectBase.choicesOrder: 'random'` on `radiogroup` / `dropdown` / `checkbox` / `ranking` | The options shown for that question are shuffled per respondent. |
+
+Static-panel and survey-level page randomization aren't wired today (§5): static `panel` is outside the accepted question-type surface, and `Survey.pagesOrder` isn't a built-in SurveyJS property — implementing either is a deferred extension, not a default.
+
+There is no separate "block-aware randomization" mechanism: a construct block expressed as a `matrix` with `rowsOrder: 'random'` is exactly the block-internal shuffle, and the surrounding container (carrying the `construct_block` tag, inherited to its row sub-questions per §3.5 "Construct membership") keeps the block contiguous because shuffling is bounded by the container. The author who wants "shuffle PHQ-9 items within themselves but keep the PHQ-9 block together" gets it by structure rather than by a new flag.
+
+What we capture and where it lands:
+
+| At submit time, on `raw_responses` | In the marts |
+|---|---|
+| `shown_questions` (jsonb array of `question_id`s, in render order) | `fact_response_item.display_order` — integer position of this question within the respondent's rendered sequence, derived from the array index in `shown_questions`. Same value across all option rows for the same `(respondent, question_id, occurrence)` (multi-select fan-out, ranking rows, matrix/panel cells). Null when `was_shown = false` (the question was routed past). |
+| `shown_choice_orders` (jsonb map, sparse) | Not surfaced in marts today; see §5 "Choice-order analysis trigger." The raw capture is the backfill hook: when an analyst wants to test for choice-position effects, the column can be added to `fact_response_item` and populated from `shown_choice_orders` without re-collection (A-2). |
+
+Why this shape:
+
+- **Render order, not configured order.** Mirrors `was_shown` (invariant 3): the engine is the source of truth for what happened, not the SQL reconstruction of what was supposed to happen. The published definition records the randomization config (and is preserved on every response via `definition_snapshot`), but the per-respondent rendering is captured directly — there is no inference step that could drift.
+- **Question display order on `fact_response_item`, not `fact_response`.** The user picks the selection-grain fact as the home so analyses already filtering by `option_key` or `value_*` get `display_order` without an extra join; the value is harmlessly denormalized across the fan-out for multi-select/matrix/panel rows.
+- **No `dim_question_version.questions_order_scope` column.** Whether a question was authored as randomized is recoverable from the published JSON (snapshotted on every response); recording it again on the dimension would risk drifting from the snapshot for no benefit at the current scale. Analysts who want to know "was this question randomized" read the definition. Analysts who want to know "what did this respondent see" read `display_order`.
+
 #### Indexes
 
 - `(survey_version_id, question_id)` — per-question aggregations within a version.
@@ -392,7 +424,8 @@ Gates:
 
 - Schema validation against the SurveyJS JSON schema.
 - Lint checks: duplicate question names, dangling `visibleIf` references, duplicate option values, missing matrix row identifiers.
-- Round-trip test (for surveys flagged as going to real respondents): headless run with synthetic respondents covering branches; response payload matches expectations.
+- **Randomization × routing safety** (FR-13): within-page (`Page.questionsOrder`), within-matrix (`Matrix.rowsOrder`), and within-question (`choicesOrder`) randomization are unconstrained — per-respondent values are stable across re-orderings and `visibleIf` operates on values, not positions. The deferred page-order extension (§5) lands with a lint that rejects cross-page `visibleIf` / `enableIf` under page randomization, by the same logic.
+- Round-trip test (for surveys flagged as going to real respondents): headless run with synthetic respondents covering branches; response payload matches expectations. With `choicesOrder: 'random'`, the oracle's reachability check uses any one rendered order — `visibleIf` reads choice *values*, not display positions, so the analysis is order-invariant.
 - Hash and freeze.
 
 Principle: **immutability matters at publish time, not at author time.** Drafts are throwaway and feel that way. Published surveys are forever and are treated that way.
@@ -567,6 +600,14 @@ Analyst and reviewer *data* access is not mediated by the application. Analysts 
 
 **Rejected.** A `construct_block` tag declares provenance ("this question is part of the PHQ-9 instrument"); it does not declare that two tagged questions are analytically equivalent. Reusable scales are sometimes administered with subtle changes — translated wording, response-scale anchor edits, dropped items — that a researcher may or may not be willing to pool across. Treating shared `construct_block` as automatic pooling would re-introduce the silent-default failure mode invariant 5 was designed to prevent (see §4.8). Pooling stays the `parent_question_id` opt-in; `construct_block` is metadata that helps a researcher *find* the questions that might be candidates for that judgment, not a substitute for making it.
 
+### 4.11 Reconstructing per-respondent display order in SQL from the published definition
+
+**Rejected** for the same reason as §4.5. The published definition encodes randomization *rules* (`questionsOrder: 'random'`, `choicesOrder: 'random'`, etc.), not the seed or the realized order any individual respondent saw. Without the seed, dbt cannot reproduce the order; with the seed, the engine would still be the authoritative source for edge cases (mid-session re-renders, back-navigation, accessibility re-orderings). Capturing the rendered order at submission time — `shown_questions` for questions, `shown_choice_orders` for choices — is the only path that doesn't drift. Like the shown-set, this is a *capture*, not an *inference*: a richer per-respondent ordering dimension (e.g., choice-order in marts) is backfillable from the raw capture without re-collection.
+
+### 4.12 Recording randomization config on `dim_question_version`
+
+**Rejected.** "Was this question randomized?" is recoverable from the published JSON, which is snapshotted on every response (`raw_responses.definition_snapshot`) and lossless. Duplicating the same fact on the dimension would either drift from the snapshot (a silent inconsistency the design refuses, per NFR-3) or require a custom test to pin them together — overhead with no analytical benefit at scale. Analysts who want "was randomization on for this question version" join the snapshot; analysts who want "what did this respondent see" read `fact_response_item.display_order`. The two questions stay separate, which is the right shape.
+
 ---
 
 ## 5. Deferred decisions
@@ -582,6 +623,9 @@ These are reopened when explicit triggers are met, not on a schedule.
 | Full routing-trace dimension | Research questions requiring reconstruction of the decision graph beyond what `was_shown` + raw `shown_questions` arrays support. (Backfillable without re-collection.) |
 | Automated PII detection as first pass on free-text | Free-text volume exceeding reviewer capacity. |
 | Org/delivery dimension | One survey (instrument) delivered to multiple organizations/cohorts that must be analyzable independently *and* pooled. Likely an attribute on `dim_respondent` (the respondent's org) — orthogonal to question identity, so analyses filter by org for "independently" and omit it for "altogether," while the survey-scoped `question_id` keeps pooling correct. Triggered when a survey is first delivered to more than one org. |
+| Choice-order analysis surface | An analyst needs to test for choice-position effects on a randomized-choice question. The raw `shown_choice_orders` is already captured per §3.4; this adds a `choice_display_order` column to `fact_response_item` (integer position of the chosen option within the respondent's rendered choices for that question, null when the question's choices weren't randomized) and the dbt model to populate it from `shown_choice_orders`. Backfillable without re-collection. |
+| Static-panel container in the publish gate | An author wants `type: 'panel'` (a non-repeating grouping element) to organize a long survey without using a matrix or paneldynamic. Adds `panel` to the accepted type surface and threads it through dbt staging (no value semantics — a panel is structural — but its `construct_block` would need to inherit to leaves per §3.5). Triggered when grouping ergonomics on a long survey outweigh the "matrix or paneldynamic only" simplicity. |
+| Survey-level page-order randomization | An author wants pages shuffled per respondent. Requires a custom shuffler at render time (`Survey.pagesOrder` isn't native) and the publish-gate lint already specified under §3.6 (reject under cross-page `visibleIf`). Triggered when a study design genuinely needs counterbalanced page order. |
 
 ---
 
@@ -594,6 +638,8 @@ These are reopened when explicit triggers are met, not on a schedule.
 | Analyst silently pools questions across versions/surveys that aren't equivalent | `question_id` is survey-scoped `(survey_id, stable_name)`, so it never pools across surveys; `GROUP BY question_version_id` is strict per-version; pooling across a rename requires the explicit `canonical_question_id` opt-in. |
 | Reworded item silently treated as the same question because its name was kept | Within a survey, keeping `stable_name` across versions *is* the continuity assertion (per-version wording is preserved in `dim_question_version`); a genuine construct change should be a rename, which breaks `question_id` and forces the explicit equivalence opt-in. |
 | Construct tags treated as a pooling key by an over-eager analyst | `construct_block` / `construct_item` are documented as provenance only; the canonical pooling key remains `canonical_question_id` (built from `parent_question_id`); the warehouse exposes no `GROUP BY construct_block` shortcut for cross-survey rollups. |
+| Order effects in a randomized survey go undetected because display order is reconstructed inconsistently or not at all | Per-respondent display order is captured at submission time (`shown_questions` in render order; `shown_choice_orders` for randomized choices) and threaded through to `fact_response_item.display_order`. Reconstruction in SQL is rejected (§4.11). Order-effect analyses use the captured column, not a downstream re-derivation. |
+| When page-order randomization (§5) lands, cross-page conditional routing could produce incoherent surveys (a `visibleIf` reading a question not yet asked) | The deferred extension carries its own publish-gate lint: reject page randomization combined with any cross-page `visibleIf` / `enableIf`. Within-page (`Page.questionsOrder`), within-matrix (`Matrix.rowsOrder`), and within-question (`choicesOrder`) randomization — which *are* shipped — don't trip this, because values are stable across re-orderings and `visibleIf` reads values, not positions. |
 | LLM-generated JSON with subtle logic errors | Round-trip test gate at publish time; pattern library reduces invention surface. |
 | Two parsers (API and dbt) drift apart over time | dbt reads from `raw_responses` only; normalized tables are a read-model, not an ETL input. |
 | Analyst confuses "selection count" with "respondent count" | Companion `fact_response` table at respondent-question grain; documented in marts; default examples use `COUNT(DISTINCT respondent_id)`. |

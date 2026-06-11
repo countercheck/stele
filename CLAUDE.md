@@ -51,9 +51,9 @@ Analyst/reviewer DB credentials are minted out of band of `stele_api` (design do
 
 1. `app.raw_responses` is append-only and the sole ETL source. dbt reads it only, never the normalized `app.responses` / `app.response_items` read-model.
 2. Published surveys are immutable. Edits → new draft → new version → new hash. Every response carries the hash it was answered against.
-3. Shown-set is captured at submit time from the SurveyJS engine. Never reconstruct routing by re-evaluating `visibleIf` in SQL.
+3. Shown-set AND render order are captured at submit time from the SurveyJS engine. `shown_questions` is in render order; `shown_choice_orders` carries the rendered choice order for any question whose options were randomized. Never reconstruct routing or display order by re-evaluating the definition in SQL. (Design doc §3.5 "Randomization and display-order capture", §4.11.)
 4. One JSON parser. API → operational read-model. dbt → warehouse. Both from `raw_responses`. Never chain them. *Enforced by `scripts/check_invariants.py`, which scans dbt SQL for forbidden table references and verifies `sources.yml` declares only `raw_responses` under the `app` schema. Pre-commit runs it; CI verifies.*
-5. No cross-version pooling by default. Opt-in via `dim_question.parent_question_id` + `parent_question_rationale`. Never auto-populate either. *Lint checks that writes to `parent_question_id` co-occur with `parent_question_rationale`.*
+5. No cross-version pooling by default. Opt-in via `dim_question.parent_question_id` + `parent_question_rationale`. Never auto-populate either. `construct_block` / `construct_item` are **provenance, not a pooling key** — they surface "this is a PHQ-9 item" but never license `GROUP BY construct_block` across surveys; pooling stays the `parent_question_id` opt-in. *Lint checks that writes to `parent_question_id` co-occur with `parent_question_rationale`; `construct_pair_integrity` enforces item⇒block; `construct_tag_stability` rejects within-survey tag drift across versions.*
 6. Free-text defaults to `pii_risk = 'high'`. `marts.fact_response_item.value_text` populated only for explicit `low`. *Lint checks that `value_text` writes to `fact_response_item` reference `pii_risk`.*
 7. Fact grain: `(respondent, survey_version, question_id, occurrence, selected_option)`. `fact_response` (respondent-question grain) is a separate table. Don't conflate.
 8. Exactly one of `{option_key, value_numeric, value_text, value_date}` per fact row. dbt test enforces; don't skip.
@@ -86,11 +86,12 @@ Work on branches; never commit directly to `main`. One branch per story/unit of 
 
 ## Don't add silent defaults for methodological judgments
 
-Three judgments stay explicit, always. Examples of what going-wrong-silently looks like:
+Four judgments stay explicit, always. Examples of what going-wrong-silently looks like:
 
-- **Cross-version equivalence.** Don't auto-fill `parent_question_rationale` from prompt similarity between v1 and v2. That's a researcher's call, not a heuristic.
+- **Cross-version equivalence.** Don't auto-fill `parent_question_rationale` from prompt similarity between v1 and v2. That's a researcher's call, not a heuristic. Same for `construct_block` ⇒ `parent_question_id`: a shared scale tag is provenance, not equivalence — don't promote it.
 - **Free-text safety.** Don't downgrade a question from `pii_risk = 'high'` to `'low'` because the prompt "looks innocuous." The default is `'high'`; downgrades are deliberate decisions at definition time.
 - **Shown vs skipped vs routed-past.** Don't collapse `was_shown = false` and `was_shown = true, value null` into "missing." They mean different things; analyses depend on the distinction.
+- **Display order.** Don't render randomized questions/choices without writing the realized order back to `raw_responses` (in `shown_questions` order + `shown_choice_orders`). Don't reconstruct `display_order` in SQL from the published definition — the definition holds the rule, not the per-respondent realization. Treat order capture as part of the submission contract, the same way the shown-set is.
 
 If you're writing a default for any of these, that's the bug.
 
@@ -99,6 +100,8 @@ If you're writing a default for any of these, that's the bug.
 Schema validation → lint (dup names, dangling `visibleIf`, dup option values, missing matrix row ids) → round-trip test (synthetic respondents, all branches) → hash + freeze.
 
 New question type = work in three places: runtime, publish test, dbt staging.
+
+Within-page (`Page.questionsOrder`), within-matrix (`Matrix.rowsOrder`), and within-question (`SelectBase.choicesOrder`) randomization are unconstrained — values are stable across re-orderings, and `visibleIf` reads values, not positions. Static-panel and survey-level `pagesOrder` shuffling aren't wired today (static panel is outside the accepted type surface; `pagesOrder` isn't native SurveyJS) — deferred per design doc §5. The page-order extension lands with its own publish-gate lint (reject cross-page `visibleIf` under page randomization).
 
 ## dbt
 
@@ -114,7 +117,8 @@ New question type = work in three places: runtime, publish test, dbt staging.
 - Give `stele_api` `CREATEROLE`, or put credential role-DDL in the request path. Role-minting lives ONLY in `api.credential_worker` / the `scripts/provision_db_credential.py` CLI over `STELE_PROVISION_DATABASE_URL`; the API just enqueues into `app.provision_requests`. And `stele_analyst`/`stele_pii_reviewer` must never accumulate grants beyond their one schema (`marts`/`pii`) — that boundary is what keeps a leaked analyst credential low-stakes.
 - Make dbt read normalized `app.*` tables.
 - `UPDATE`/`DELETE` `raw_responses` outside the tombstone workflow.
-- Auto-populate `parent_question_id` from any heuristic.
+- Auto-populate `parent_question_id` from any heuristic — including a shared `construct_block` (provenance, not equivalence; design doc §4.10).
+- Reconstruct per-respondent display order in SQL from the published definition. The definition holds the rule (`questionsOrder: 'random'`, etc.); the per-respondent realization is captured at submit time and read straight through to `fact_response_item.display_order` (design doc §4.11).
 - Add a new runtime component (broker, search, separate analytics DB) — check design doc § 5 triggers first.
 - Postgres-specific SQL in dbt without dispatch or a documented reason.
 - `git rm` survey definitions or response data. Use the database.

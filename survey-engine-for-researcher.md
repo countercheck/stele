@@ -116,7 +116,7 @@ publish, by design: the system won't accept a question whose answers it can't pl
 
 ---
 
-## 4. The three commitments
+## 4. The four commitments
 
 These are the judgments the system will never make for you. Each one is a place
 where a "helpful" default would quietly corrupt an analysis, so the system makes the
@@ -145,7 +145,15 @@ analyses then opt in by using the derived canonical key
 (`COALESCE(parent_question_id, question_id)`).
 
 What the system refuses: auto-pooling from prompt similarity. That would absorb your
-judgment into a default and produce silently inconsistent longitudinal series.
+judgment into a default and produce silently inconsistent longitudinal series. The
+same refusal extends to **construct tags**: you can tag a question with
+`construct_block: "phq9"` and `construct_item: "phq9_q3"` to record that it came from
+a named, reusable scale (PHQ-9, GAD-7, eNPS, …), and those tags travel into
+`dim_question` so you can *find* every PHQ-9-tagged question across every survey.
+But shared tags do **not** license pooling — two surveys' PHQ-9 items are still
+distinct `question_id`s, and pooling them is still the explicit `parent_question_id`
+opt-in, with rationale. Tags surface candidates for that judgment; they don't make
+it for you.
 
 > Status: the integrity guard ships today (dbt’s `parent_question_integrity` test), but there isn’t yet a supported workflow to *persist* equivalence decisions — `dim_question` emits these columns as nulls.
 > The ergonomic tooling + storage around declaring equivalence is the natural next build —
@@ -190,6 +198,45 @@ this grid cell" stays distinct from "this respondent's branch never reached the 
 
 What the system refuses: collapsing `was_shown = false` and `was_shown = true, value
 null` into one "missing" bucket.
+
+### d. Display order is what the respondent saw, never what the definition says
+
+Surveys can randomize what each respondent sees — question order within a page,
+row order within a matrix, and choice order within a single/multi-select/ranking
+question. Whenever shuffling is on, the **order that respondent actually saw is
+captured at submission time**, the same way the shown-set is, and lands in
+`fact_response_item.display_order` as an integer position within their rendered
+sequence (FR-13).
+
+What you can randomize:
+
+- **Within a page.** Set `questionsOrder: "random"` on a page. Questions on that
+  page shuffle per respondent; questions on other pages are unaffected.
+- **Within a matrix.** Set `rowsOrder: "random"` on a matrix. The rows (each row
+  is its own sub-question — see [`patterns/matrix.json`](patterns/matrix.json))
+  shuffle per respondent; the column order (the response scale) is unchanged.
+  This is also how you get **block-aware randomization**: a reusable scale fits
+  naturally as a matrix (rows = items, columns = response options); tag the
+  matrix with `construct_block: "phq9"` (the tag inherits to row sub-questions),
+  set `rowsOrder: "random"`, and PHQ-9 items shuffle among themselves while
+  staying contiguous because the matrix is the boundary. No separate flag.
+- **Within a question.** Set `choicesOrder: "random"` on a `radiogroup`,
+  `dropdown`, `checkbox`, or `ranking`. The rendered choice order is captured
+  per-respondent at submit time (in `shown_choice_orders` on the raw response).
+  Choice-position effects are analyzable; the marts column to surface this is
+  deferred until first need (design doc §5 "Choice-order analysis surface").
+
+Not built today: survey-level page shuffling, and randomization in a static `panel`
+container — see "What's intentionally not here" (§8) for the deferred paths and
+their triggers.
+
+What the system refuses: reconstructing the display order in SQL from the published
+definition. The definition records the *rule* (`rowsOrder: "random"`), not the
+realized order any individual respondent saw. The engine that drew the screen is the
+authoritative source; the warehouse reads it through, never recomputes it.
+Reading `MIN(display_order)` vs `MAX(display_order)` across respondents tells you
+*which* questions were randomized after the fact; comparing answer rates or
+distributions across `display_order` quartiles is how you test for order effects.
 
 ---
 
@@ -260,6 +307,15 @@ value_date}`. Which one is determined by the question's `value_kind`
 `value_numeric` and not among the free text — worth knowing when you filter by
 "response type."
 
+### Order effects, when randomization is on
+
+`fact_response_item.display_order` is the integer position of the question within
+the respondent's rendered sequence — the same value across all option rows for the
+same `(respondent, question_id, occurrence)` (it's a question-grain property
+denormalized onto selection-grain rows). Null when the question was routed past
+(`was_shown = false`). Use it to test for ordering effects on randomized questions;
+ignore it when randomization wasn't on (it just mirrors definition order).
+
 ### Pooling across versions
 
 `question_id` is survey-scoped (`(survey_id, stable_name)`): it pools a survey's
@@ -287,6 +343,17 @@ So expectations are calibrated (design doc §5):
 
 - **Equivalence-pooling tooling** beyond the integrity guard — declarable, but not
   yet ergonomic (§4a).
+- **Choice-position order in the marts.** The rendered choice order is captured per
+  respondent at submit time (`shown_choice_orders` on the raw response), so it's
+  there if you need it; a `choice_display_order` column on `fact_response_item` is
+  the natural next surface and backfillable without re-collection — built when an
+  analysis first wants it (§4d, design doc §5).
+- **Static-panel grouping.** A non-repeating `panel` container for organizing long
+  surveys is outside today's accepted type surface; use a matrix or a page to
+  group items for now. Adding `panel` is a deferred extension (design doc §5).
+- **Survey-level page shuffling.** `pagesOrder: "random"` isn't a native SurveyJS
+  property; if a study design genuinely needs counterbalanced page order, that's a
+  custom shuffler — deferred until a study actually wants it (design doc §5).
 - **Automated PII detection** — the reviewer pass is human today (§5).
 - **Scheduled/automatic ETL** — the warehouse rebuilds on demand, when you ask.
 - **A visual survey designer** — authoring is JSON + live preview + the pattern

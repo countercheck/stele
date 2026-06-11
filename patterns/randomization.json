@@ -1,0 +1,76 @@
+{
+  "title": "Randomization (question order, matrix-row order, choice order)",
+  "description": "questionsOrder: 'random' on a page shuffles its questions per respondent; rowsOrder: 'random' on a matrix shuffles its row sub-questions; choicesOrder: 'random' on a single/multi-select/ranking shuffles its options. The order each respondent actually saw is captured at submission time — shown_questions in render order, shown_choice_orders for randomized choices — and threads to fact_response_item.display_order (design doc §3.5 'Randomization and display-order capture'; never reconstructed in SQL, §4.11). Block-aware randomization is structural, not a separate flag: a reusable scale fits naturally as a matrix tagged with construct_block (the tag inherits to row sub-questions per §3.5 'Construct membership'), so PHQ-9 items shuffle among themselves and stay contiguous because the matrix is the boundary. visibleIf reads values, not display positions, so within-page / within-matrix / within-question randomization is always safe to combine with branching. Static-panel and survey-level page shuffling aren't wired today (deferred, design doc §5).",
+  "pages": [
+    {
+      "name": "p_warmup",
+      "questionsOrder": "random",
+      "title": "Warm-up questions (randomized)",
+      "description": "questionsOrder: 'random' on a page shuffles the page's elements per respondent. The two questions here are unrelated, so order is the only thing that changes.",
+      "elements": [
+        {
+          "type": "radiogroup",
+          "name": "coffee",
+          "title": "Coffee or tea?",
+          "choices": ["coffee", "tea", "neither"]
+        },
+        {
+          "type": "radiogroup",
+          "name": "morning_or_night",
+          "title": "Morning person or night owl?",
+          "choices": ["morning", "night", "depends"]
+        }
+      ]
+    },
+    {
+      "name": "p_scale",
+      "elements": [
+        {
+          "type": "matrix",
+          "name": "phq9",
+          "title": "Over the last two weeks, how often have you been bothered by…",
+          "description": "Matrix with rowsOrder: 'random' is the block-aware-randomization shape: each row is its own sub-question (stable_name 'phq9.q1', 'phq9.q2', 'phq9.q3'), the shared response scale lives in columns, and the rows shuffle per respondent. construct_block on the matrix inherits to the row sub-questions in dim_question (design doc §3.5 'Construct membership' inheritance rule), so each row carries construct_block='phq9'. construct_item is leaf-only — set per row, not on the container.",
+          "construct_block": "phq9",
+          "rowsOrder": "random",
+          "rows": [
+            { "value": "q1", "text": "Little interest or pleasure in doing things", "construct_item": "phq9_q1" },
+            { "value": "q2", "text": "Feeling down, depressed, or hopeless", "construct_item": "phq9_q2" },
+            { "value": "q3", "text": "Trouble falling/staying asleep, or sleeping too much", "construct_item": "phq9_q3" }
+          ],
+          "columns": [
+            { "value": "0", "text": "Not at all" },
+            { "value": "1", "text": "Several days" },
+            { "value": "2", "text": "More than half the days" },
+            { "value": "3", "text": "Nearly every day" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "p_choices",
+      "elements": [
+        {
+          "type": "radiogroup",
+          "name": "favorite_color",
+          "title": "Pick a favorite color",
+          "description": "choicesOrder: 'random' shuffles the options shown to this respondent. The chosen option_key is unchanged — selection is by value, not position — so dim_option.display_order (the authored position) and the per-respondent rendered position are different things. The per-respondent rendered choice order lives in raw_responses.shown_choice_orders; a fact-side choice_display_order column is deferred (design doc §5 'Choice-order analysis surface').",
+          "choicesOrder": "random",
+          "choices": [
+            { "value": "red", "text": "Red" },
+            { "value": "green", "text": "Green" },
+            { "value": "blue", "text": "Blue" },
+            { "value": "yellow", "text": "Yellow" }
+          ]
+        },
+        {
+          "type": "radiogroup",
+          "name": "color_followup",
+          "title": "Is that the color of something you own?",
+          "description": "visibleIf reads the chosen value ({favorite_color}), not its rendered position, so choices-order randomization never affects branching reachability. The publish gate's round-trip oracle treats randomized choices as order-invariant for the same reason (design doc §3.6).",
+          "visibleIf": "{favorite_color} notempty",
+          "choices": ["yes", "no", "not_sure"]
+        }
+      ]
+    }
+  ]
+}

@@ -58,6 +58,7 @@ a panel free-text cell stays `value_text` regardless of `inputType`.
 | [branching.json](branching.json) | `visibleIf` conditional routing, including complementary branches |
 | [multi_page.json](multi_page.json) | multiple pages; a `visibleIf` referencing an answer from an earlier page |
 | [calculated_values.json](calculated_values.json) | a `calculatedValue` as a reusable, named `visibleIf` condition |
+| [randomization.json](randomization.json) | `questionsOrder: 'random'` (page + panel) and `choicesOrder: 'random'`, plus the block-aware shape (a `construct_block`-tagged panel shuffling its items while staying contiguous); per-respondent display order is captured at submit time and threads to `fact_response_item.display_order` |
 
 Each file annotates itself inline: the survey- and question-level `title` and
 `description` fields are real SurveyJS properties (they render in the runtime), so
